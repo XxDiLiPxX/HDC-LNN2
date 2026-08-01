@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+runs/
+soar_alerts.log
+train_test_network.csv
+hdlnn/deploy/uploads/
