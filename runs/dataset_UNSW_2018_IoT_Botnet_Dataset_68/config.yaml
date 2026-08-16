@@ -1,0 +1,98 @@
+cache_dir: /Users/dilipp/HDC-LNN2/datasets
+categorical_columns:
+- flgs
+- proto
+- saddr
+- sport
+- daddr
+- dport
+- state
+- smac
+- dmac
+- soui
+- doui
+- sco
+- dco
+columns:
+- pkSeqID
+- stime
+- flgs
+- proto
+- saddr
+- sport
+- daddr
+- dport
+- pkts
+- bytes
+- state
+- ltime
+- seq
+- dur
+- mean
+- stddev
+- smac
+- dmac
+- sum
+- min
+- max
+- soui
+- doui
+- sco
+- dco
+- spkts
+- dpkts
+- sbytes
+- dbytes
+- rate
+- srate
+- drate
+- attack
+- category
+- subcategory
+data:
+  cache_dir: data/raw
+  dataset_name: unsw_nb15
+  split_version: v1
+dataset_name: unsw_botnet
+divergence:
+  mode: mahalanobis
+  standardize_z_score: false
+  threshold_k: 3.0
+download_urls: {}
+entity_id_modulo: 254
+file_pattern: UNSW_2018_IoT_Botnet_Dataset_68.csv
+hdc:
+  continuous_features_range:
+  - 0.0
+  - 1.0
+  dimension: 10000
+label_column: attack
+model:
+  batch_size: 256
+  epochs: 2
+  hidden_dim: 64
+  lr: 0.001
+numerical_columns:
+- pkSeqID
+- stime
+- pkts
+- bytes
+- ltime
+- seq
+- dur
+- mean
+- stddev
+- sum
+- min
+- max
+- spkts
+- dpkts
+- sbytes
+- dbytes
+- rate
+- srate
+- drate
+pipeline:
+  frozen_baseline_path: frozen_baseline_botnet.pt
+seed: 42
+sublabel_column: category

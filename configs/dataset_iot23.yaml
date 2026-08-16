@@ -1,0 +1,55 @@
+dataset_name: "iot23"
+cache_dir: "datasets"
+entity_id_modulo: 254
+
+download_urls:
+  kaggle_dataset: "surajsooraj26/iot-23"
+
+columns:
+  - ts
+  - uid
+  - id.orig_h
+  - id.orig_p
+  - id.resp_h
+  - id.resp_p
+  - proto
+  - service
+  - duration
+  - orig_bytes
+  - resp_bytes
+  - conn_state
+  - local_orig
+  - local_resp
+  - missed_bytes
+  - history
+  - orig_pkts
+  - orig_ip_bytes
+  - resp_pkts
+  - resp_ip_bytes
+  - tunnel_parents
+  - label
+  - detailed-label
+
+categorical_columns:
+  - proto
+  - service
+  - conn_state
+  - history
+
+numerical_columns:
+  - duration
+  - orig_bytes
+  - resp_bytes
+  - missed_bytes
+  - orig_pkts
+  - orig_ip_bytes
+  - resp_pkts
+  - resp_ip_bytes
+
+label_column: "label"
+sublabel_column: "detailed-label"
+
+pipeline:
+  frozen_baseline_path: frozen_baseline_iot23.pt
+divergence:
+  mode: "hdc_cosine"

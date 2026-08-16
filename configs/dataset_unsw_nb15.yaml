@@ -1,5 +1,5 @@
 dataset_name: "unsw_nb15"
-cache_dir: "data/raw"
+cache_dir: "datasets"
 entity_id_modulo: 254
 
 download_urls:
@@ -101,3 +101,9 @@ numerical_columns:
 
 label_column: "label"
 sublabel_column: "attack_cat"
+
+pipeline:
+  frozen_baseline_path: frozen_baseline_nb15.pt
+divergence:
+  mode: "hdc_cosine"
+

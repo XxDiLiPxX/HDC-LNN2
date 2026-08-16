@@ -1,0 +1,86 @@
+dataset_name: "unsw_botnet"
+cache_dir: "datasets"
+entity_id_modulo: 254
+
+download_urls: {}
+
+columns:
+  - pkSeqID
+  - stime
+  - flgs
+  - proto
+  - saddr
+  - sport
+  - daddr
+  - dport
+  - pkts
+  - bytes
+  - state
+  - ltime
+  - seq
+  - dur
+  - mean
+  - stddev
+  - smac
+  - dmac
+  - sum
+  - min
+  - max
+  - soui
+  - doui
+  - sco
+  - dco
+  - spkts
+  - dpkts
+  - sbytes
+  - dbytes
+  - rate
+  - srate
+  - drate
+  - attack
+  - category
+  - subcategory
+
+categorical_columns:
+  - flgs
+  - proto
+  - saddr
+  - sport
+  - daddr
+  - dport
+  - state
+  - smac
+  - dmac
+  - soui
+  - doui
+  - sco
+  - dco
+
+numerical_columns:
+  - pkSeqID
+  - stime
+  - pkts
+  - bytes
+  - ltime
+  - seq
+  - dur
+  - mean
+  - stddev
+  - sum
+  - min
+  - max
+  - spkts
+  - dpkts
+  - sbytes
+  - dbytes
+  - rate
+  - srate
+  - drate
+
+label_column: "attack"
+sublabel_column: "category"
+
+pipeline:
+  frozen_baseline_path: frozen_baseline_botnet.pt
+divergence:
+  mode: "hdc_cosine"

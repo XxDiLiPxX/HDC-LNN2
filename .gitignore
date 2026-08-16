@@ -2,7 +2,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/
-runs/
+# runs/ (removed to track weights)
 soar_alerts.log
 train_test_network.csv
 hdlnn/deploy/uploads/
+datasets/
+*.csv

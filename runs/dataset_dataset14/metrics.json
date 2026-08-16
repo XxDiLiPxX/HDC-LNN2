@@ -1,0 +1,18 @@
+{
+    "confusion_matrix": {
+        "tp": 4,
+        "fp": 4,
+        "fn": 2,
+        "tn": 2996
+    },
+    "precision": 0.5,
+    "recall": 0.6666666666666666,
+    "f1_score": 0.5714285714285715,
+    "auroc": 0.9901111111111112,
+    "pr_auc": 0.687719298245614,
+    "fpr_at_95_tpr": 0.029666666666666668,
+    "latency_ms_per_flow": 0.13050364537613576,
+    "throughput_flows_sec": 7662.621202019408,
+    "peak_rss_mb": 6483.84375,
+    "sample_size": 3006
+}
