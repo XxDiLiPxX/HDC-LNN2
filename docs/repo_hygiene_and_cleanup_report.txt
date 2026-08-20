@@ -1,0 +1,224 @@
+================================================================================
+TASK REPORT: FINAL CODEBASE HYGIENE, DOCS FRAMING & REPO CLEANUP
+================================================================================
+Timestamp: 2026-08-20
+Status: COMPLETE & VERIFIED
+
+--------------------------------------------------------------------------------
+1. OBJECTIVE
+--------------------------------------------------------------------------------
+1. Fix misleading latency/throughput claims across all committed documentation,
+   clarifying that threshold calibration does not create algorithmic speedup and that
+   reported latency/throughput shifts are within expected run-to-run system jitter.
+2. Establish a robust, production-grade `.gitignore` that strictly excludes virtual
+   environments (`.venv/`, `.venv-*/`), heavy datasets (`datasets/*.csv`), runtime logs,
+   bulky experimental run trees (`runs/`), and local editor metadata.
+3. Clean and reorganize the repository: move diagnostic and exploratory scripts from
+   `scratch/` into `experiments/`, move historical task reports to `docs/`, and store
+   verified, lightweight benchmark summary JSONs into `results/`.
+4. Update `pyproject.toml` with complete, current project metadata, active dependencies,
+   and standard `pytest` path configurations.
+5. Verify that all automated unit and integration tests pass cleanly (15/15 passed).
+
+--------------------------------------------------------------------------------
+2. ACTIONS TAKEN
+--------------------------------------------------------------------------------
+Part A: Framing Corrections (Latency & Throughput Variance):
+- Corrected `final_comparison_table.md` Section 3 with an explicit note explaining
+  that decision threshold calibration is a single float comparison with near-zero
+  overhead, and that reported latency/throughput shifts between runs are normal
+  system measurement variance. Emphasized that the real load-bearing results are the
+  +0.1948 (UNSW) and +0.1328 (KDD) F1 and recall improvements.
+- Updated `docs/final_optimization_and_comparison_report.txt` Section 4 tables to
+  clearly label latency and throughput deltas as "(Run-to-run variance)".
+
+Part B: Repository Cleanup & `.gitignore` Architecture:
+- Updated `.gitignore` to explicitly ignore `runs/`, `data/`, `hdlnn/deploy/uploads/`,
+  `datasets/*.csv`, `soar_alerts.log`, `.venv/`, `.venv-*/`, `.pytest_cache/`, `.claude/`,
+  and editor swap/cache files.
+- Created `datasets/SOURCES.md` documenting canonical acquisition sources and download
+  links for UNSW-NB15, NSL-KDD, ToN-IoT, and UNSW 2018 IoT Botnet datasets.
+- Created `results/` containing the core verified summary artifacts:
+  * `results/final_optimized_hdclnn_summary.json`
+  * `results/full_scale_30k_results.json`
+  * `results/encoder_separability.json`
+  * `results/phase9_manifold_results_unsw_nb15_testing_set.json`
+  * `results/phase9_manifold_results_kdd_test.json`
+- Relocated historical working notes to `docs/` (`docs/final_optimization_and_comparison_report.txt`,
+  `docs/manifold_quality_improvement_report.txt`, `docs/separability_and_calibration_report.txt`,
+  `docs/task_report.txt`).
+- Moved experimental diagnostic scripts from `scratch/` to `experiments/`
+  (`experiments/run_final_optimized_evaluation.py`, `experiments/run_phase3_phase4.py`,
+  `experiments/run_phase9_manifold.py`).
+- Completely removed `scratch/` directory and untracked runtime logs (`soar_alerts.log`).
+
+Part C: Dependency & Packaging Integrity:
+- Populated `pyproject.toml` with project specification (`[project]`), build backend
+  (`[build-system]`), full list of dependencies (`torch`, `numpy`, `pandas`, `scipy`,
+  `scikit-learn`, `pyyaml`, `psutil`, `matplotlib`, `fastapi`, `uvicorn`, `websockets`,
+  `pyarrow`), and configured `[tool.pytest.ini_options]` with `pythonpath = ["."]`.
+- Executed `pytest`: All 15 unit and integration tests collected and passed in 3.28s.
+
+--------------------------------------------------------------------------------
+3. FILES CHANGED
+--------------------------------------------------------------------------------
+Modified:
+- `.gitignore` (Comprehensive exclusions for venvs, datasets, runs, caches)
+- `final_comparison_table.md` (Updated with full-scale verified numbers and latency variance notes)
+- `hdlnn/divergence/manifold.py` (Ledoit-Wolf shrinkage covariance default)
+- `hdlnn/divergence/scorer.py` (Validation F1-max threshold calibration)
+- `hdlnn/eval/harness.py` (Validation F1-max calibration pipeline integration)
+- `pyproject.toml` (Complete dependency manifest + pytest config)
+- `docs/final_optimization_and_comparison_report.txt` (Variance annotations)
+
+Added:
+- `datasets/SOURCES.md` (Dataset source documentation)
+- `docs/` (Process history reports)
+- `experiments/` (Archived experimental scripts)
+- `results/` (Key verified benchmark JSON artifacts)
+
+Removed:
+- `scratch/` (Deleted)
+- `soar_alerts.log` (Deleted)
+
+--------------------------------------------------------------------------------
+4. COMMANDS & TESTS
+--------------------------------------------------------------------------------
+1. `pytest`: 15 passed in 3.28s (test_ae_smoke, test_deploy, test_encoder, test_encoders_smoke,
+   test_harness, test_injector, test_item_memory, test_manifold, test_numerical_parity, test_splitter).
+2. `git status`: Clean working directory state with only clean untracked folders (docs, experiments, results, sources).
+3. `git add -A --dry-run`: Verified exact list of tracked files without bulky data/runs.
+
+--------------------------------------------------------------------------------
+5. RESULTS
+--------------------------------------------------------------------------------
+- Part A (Fix Misleading Claims): PASS
+- Part B (Repo Cleanup & .gitignore): PASS
+- Part C (Final State Check & Tests): PASS
+
+--------------------------------------------------------------------------------
+6. EVIDENCE
+--------------------------------------------------------------------------------
+
+### A. Corrected Prose Snippet (`final_comparison_table.md` & `docs/`):
+```markdown
+> **Note on Latency / Throughput Measurements**: The decision threshold change is a
+> single floating-point comparison ($O(1)$) with near-zero computational overhead. Slight
+> variations in reported latency/throughput between benchmark runs reflect standard run-to-run
+> system execution variance, not algorithmic acceleration. The core optimization results are
+> the **+0.1948 (UNSW)** and **+0.1328 (KDD)** F1 improvements achieved by moving to the
+> empirical validation F1-maximizing operating point, along with the Ledoit-Wolf shrinkage
+> manifold refinement.
+```
+
+### B. Final `.gitignore` Contents:
+```gitignore
+# Byte-compiled / optimized / ambient python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python virtual environments
+.venv/
+.venv*/
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Testing, typing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Runtime logging & lockfiles
+*.log
+*.sqlite3
+*.db
+
+# Bulky experimental runs directory (raw outputs, large parquet logs, decision records)
+runs/
+data/
+hdlnn/deploy/uploads/
+
+# Raw dataset files (heavy CSVs up to 200MB+; see datasets/SOURCES.md for canonical links)
+datasets/*.csv
+datasets/*/*.csv
+*.csv
+
+# Local IDE & editor configuration
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+```
+
+### C. Final Root Directory Listing:
+```
+HDC-LNN2/
+├── .gitignore
+├── ARCHITECTURE.md
+├── README.md
+├── final_comparison_table.md
+├── pyproject.toml
+├── run_all_baselines.py
+├── run_all_datasets.py
+├── evaluate_encoder_separability.py
+├── configs/
+├── datasets/
+│   ├── README.md
+│   └── SOURCES.md
+├── docs/
+│   ├── final_optimization_and_comparison_report.txt
+│   ├── manifold_quality_improvement_report.txt
+│   ├── separability_and_calibration_report.txt
+│   └── task_report.txt
+├── experiments/
+│   ├── run_final_optimized_evaluation.py
+│   ├── run_phase3_phase4.py
+│   └── run_phase9_manifold.py
+├── hdlnn/
+├── results/
+│   ├── encoder_separability.json
+│   ├── final_optimized_hdclnn_summary.json
+│   ├── full_scale_30k_results.json
+│   ├── phase9_manifold_results_kdd_test.json
+│   └── phase9_manifold_results_unsw_nb15_testing_set.json
+└── tests/
+```
+
+### D. `git add -A --dry-run` Output:
+```
+add '.gitignore'
+add 'final_comparison_table.md'
+add 'hdlnn/divergence/manifold.py'
+add 'hdlnn/divergence/scorer.py'
+add 'hdlnn/eval/harness.py'
+add 'pyproject.toml'
+add 'datasets/SOURCES.md'
+add 'docs/final_optimization_and_comparison_report.txt'
+add 'docs/manifold_quality_improvement_report.txt'
+add 'docs/separability_and_calibration_report.txt'
+add 'docs/task_report.txt'
+add 'experiments/run_final_optimized_evaluation.py'
+add 'experiments/run_phase3_phase4.py'
+add 'experiments/run_phase9_manifold.py'
+add 'results/encoder_separability.json'
+add 'results/final_optimized_hdclnn_summary.json'
+add 'results/full_scale_30k_results.json'
+add 'results/phase9_manifold_results_kdd_test.json'
+add 'results/phase9_manifold_results_unsw_nb15_testing_set.json'
+```
+================================================================================

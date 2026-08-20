@@ -65,9 +65,9 @@ source .venv/bin/activate
 *(You will see `(.venv)` in your terminal prompt).*
 
 ### Step 2: Dataset & Runs Directory Setup
-- `datasets/` and `runs/` folders exist in the repository structure but are intentionally kept empty of data in git tracking (`.gitignore`).
-- Download benchmark datasets (e.g. UNSW-NB15, NSL-KDD, CICIoT2023) and place the CSV files directly inside `datasets/`. See [`datasets/README.md`](datasets/README.md) for details and expected file names.
-- The `runs/` directory is automatically populated with `metrics.json`, `decisions.parquet`, and `roc_curve.png` whenever evaluation or training is run. It is normal and expected for `runs/` to be empty on a fresh clone. See [`runs/README.md`](runs/README.md).
+- `datasets/` and `runs/` folders exist in the repository structure but are intentionally excluded from git tracking (see `.gitignore`).
+- Download benchmark datasets (e.g. UNSW-NB15, NSL-KDD, CICIoT2023) and place the CSV files directly inside `datasets/`. See [`datasets/SOURCES.md`](datasets/SOURCES.md) for canonical download links and expected file names.
+- The `runs/` directory is automatically populated with `metrics.json`, `decisions.parquet`, and `roc_curve.png` whenever evaluation or training is run. It is normal and expected for `runs/` to be empty on a fresh clone. Key verified benchmark summary artifacts are committed to [`results/`](results/).
 
 ---
 
@@ -171,7 +171,7 @@ python evaluate_encoder_separability.py
 - **Normalized Euclidean Distance**: Scale-invariant Euclidean gap.
 - **Fisher-like Ratio**: Ratio of between-class variance to within-class variance.
 - **Separability Margin**: Net distinction ($\text{Intra-Normal Sim} - \text{Inter-Class Sim}$).
-- Saves empirical metrics directly to [`runs/encoder_separability.json`](runs/encoder_separability.json).
+- Saves empirical metrics to [`results/encoder_separability.json`](results/encoder_separability.json).
 
 ---
 
@@ -203,14 +203,30 @@ Every benchmark execution saves structured, verifiable artifacts:
 
 ```
 HDC-LNN2/
-├── final_comparison_table.md       # Master benchmark comparison table + architectural ranking
-├── datasets/                       # Local raw benchmark CSVs (gitignored except README)
-│   └── README.md
-└── runs/                           # Generated evaluation runs & checkpoints (gitignored except README)
-    ├── README.md
-    ├── <run_id>/
-    │   ├── metrics.json            # Confusion matrix, F1, AUROC, latency, RSS, throughput
-    │   ├── decisions.parquet       # Per-flow actual label, predicted label, drift score, timestamp
-    │   └── config.yaml             # Exact snapshot of hyperparameters used for reproducibility
-    └── encoder_separability.json   # Geometric clustering & separability metrics
+├── final_comparison_table.md       # Master 5-baseline comparison table (full-scale verified)
+├── ARCHITECTURE.md                 # Detailed system architecture documentation
+├── pyproject.toml                  # Project metadata & dependency manifest
+├── datasets/                       # Raw benchmark CSVs — gitignored; see SOURCES.md
+│   ├── README.md
+│   └── SOURCES.md                  # Canonical download links for all benchmark datasets
+├── results/                        # Committed verified summary artifacts
+│   ├── final_optimized_hdclnn_summary.json    # Final optimized HDC-LNN test metrics
+│   ├── full_scale_30k_results.json            # Full 5-baseline 30k-flow benchmark
+│   ├── encoder_separability.json              # Geometric separability study metrics
+│   ├── phase9_manifold_results_unsw_nb15_testing_set.json
+│   └── phase9_manifold_results_kdd_test.json
+├── docs/                           # Process reports & optimization history
+│   ├── final_optimization_and_comparison_report.txt
+│   ├── manifold_quality_improvement_report.txt
+│   ├── task_report.txt
+│   └── repo_hygiene_and_cleanup_report.txt
+├── experiments/                    # Diagnostic and calibration experiment scripts
+│   ├── run_phase3_phase4.py        # Phase 3/4: ROC separability & threshold calibration
+│   ├── run_phase9_manifold.py      # Phase 9: Manifold quality (Ledoit-Wolf, OAS, MCD)
+│   └── run_final_optimized_evaluation.py
+└── runs/                           # Live evaluation outputs — gitignored
+    └── <run_id>/
+        ├── metrics.json            # Confusion matrix, F1, AUROC, latency, RSS, throughput
+        ├── decisions.parquet       # Per-flow label, prediction, drift score, timestamp
+        └── config.yaml             # Hyperparameter snapshot for reproducibility
 ```

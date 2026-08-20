@@ -416,10 +416,15 @@ def run_experiment(
         scorer.fit_threshold(val_normal_inputs, val_normal_states)
         logger.info(f"Validation Calibrated AE Reconstruction Threshold on Normals: {scorer.reconstruction_threshold:.4f}")
     elif scoring_mode == "mahalanobis":
-        k_val = config.divergence.get("threshold_k", 3.0)
-        scorer.threshold_k = k_val
-        scorer.fit_mahalanobis_threshold(val_normal_states)
-        logger.info(f"Validation Calibrated Mahalanobis Threshold on Normals: {scorer.mahalanobis_threshold:.4f} (k={scorer.threshold_k})")
+        has_positives = np.sum(val_labels == 1) > 0
+        if has_positives and len(val_states_list) > 0:
+            val_all_states = torch.stack(val_states_list)
+            scorer.fit_f1_max_threshold(val_normal_states, val_all_states, val_labels)
+        else:
+            k_val = config.divergence.get("threshold_k", 3.0)
+            scorer.threshold_k = k_val
+            scorer.fit_mahalanobis_threshold(val_normal_states)
+            logger.info(f"Validation Calibrated Mahalanobis Threshold on Normals: {scorer.mahalanobis_threshold:.4f} (k={scorer.threshold_k})")
         
     elif scoring_mode == "cosine":
         # 1. Establish initial_threshold from validation normal flows

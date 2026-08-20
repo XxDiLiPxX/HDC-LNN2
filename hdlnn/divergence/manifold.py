@@ -1,5 +1,7 @@
 import torch
 import logging
+import numpy as np
+from sklearn.covariance import LedoitWolf
 
 logger = logging.getLogger(__name__)
 
@@ -7,6 +9,7 @@ class ReferenceManifold:
     """Represents the statistical reference manifold of normal trajectory states.
     
     Fits the mean and inverse covariance parameters using normal-traffic validation states.
+    Uses Ledoit-Wolf shrinkage covariance estimation by default.
     """
     def __init__(self, hidden_dim: int, eps: float = 1e-5):
         self.hidden_dim = hidden_dim
@@ -21,6 +24,7 @@ class ReferenceManifold:
     def fit(self, states: torch.Tensor) -> None:
         """Fits the mean and regularized inverse covariance of normal trajectory states.
         
+        Uses Ledoit-Wolf shrinkage covariance estimator.
         If the dimension is high (>1000), we skip covariance calculations for efficiency
         and use Cosine Distance.
         
@@ -42,17 +46,22 @@ class ReferenceManifold:
             logger.info("High-dimensional manifold: Skipping covariance calculation, defaulting to Cosine Distance.")
             return
             
-        # Calculate covariance
-        cov = torch.cov(states.T)
-        
-        # Add regularization to diagonal to prevent singularity
-        regularizer = self.eps * torch.eye(self.hidden_dim, device=cov.device)
-        cov = cov + regularizer
-        
-        # Invert the regularized covariance matrix
-        self.inv_cov = torch.linalg.inv(cov)
+        # Fit Ledoit-Wolf shrinkage covariance
+        try:
+            states_np = states.detach().cpu().numpy()
+            lw = LedoitWolf()
+            lw.fit(states_np)
+            # Precision matrix is the inverse covariance matrix
+            self.inv_cov = torch.from_numpy(lw.precision_).to(dtype=states.dtype, device=states.device)
+            logger.info(f"Reference Manifold Ledoit-Wolf fitting completed (shrinkage={lw.shrinkage_:.4f}).")
+        except Exception as e:
+            logger.warning(f"Ledoit-Wolf fitting failed ({e}), falling back to empirical regularized covariance.")
+            cov = torch.cov(states.T)
+            regularizer = self.eps * torch.eye(self.hidden_dim, device=cov.device)
+            cov = cov + regularizer
+            self.inv_cov = torch.linalg.inv(cov)
+            
         self.is_fit = True
-        logger.info("Reference Manifold parameter fitting completed successfully.")
 
     def compute_mahalanobis_distance(self, states: torch.Tensor) -> torch.Tensor:
         """Computes the distance (Mahalanobis or Cosine fallback) for a batch or single hidden state vector.

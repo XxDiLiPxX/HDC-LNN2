@@ -1,0 +1,116 @@
+================================================================================
+FINAL HDC-LNN OPTIMIZATION & BENCHMARK COMPARISON REPORT
+================================================================================
+Timestamp: 2026-08-20
+Status: COMPLETE — FINAL CONFIG FROZEN & INDEPENDENTLY SKLEARN-VERIFIED
+
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & CLOSING FINDINGS
+--------------------------------------------------------------------------------
+In this optimization phase, we systematically explored empirical threshold calibration
+and statistical manifold covariance refinement for the HDC-LNN framework while
+maintaining the underlying model weights and continuous representation frozen.
+
+Threshold calibration proved highly effective and computationally free: shifting
+from a rigid heuristic (mean + k*std on normal-only distributions) to an empirical
+validation F1-maximizing operating point boosted test F1 by +0.1948 (0.6771 -> 0.8719)
+on UNSW-NB15 and +0.1328 (0.6761 -> 0.8089) on KDD-test by resolving severe attack
+under-detection (recall increased from ~52% to 80-85% while keeping precision high at
+82-90%).
+
+In contrast, refining the manifold estimation via Ledoit-Wolf shrinkage covariance
+and hidden-state standardization provided small precision gains (~0.5%) but confirmed
+that covariance math alone cannot fix high-TPR false positive rates (FPR@95%TPR remains
+locked at ~82% on UNSW and ~94% on KDD) due to an intrinsic ~45-47% geometric overlap
+between benign traffic and stealthy attacks in the current 64-dimensional latent state space.
+
+To achieve low FPR (<5%) at high threat capture (>95% TPR) in future work, architectural
+representation changes are required: multi-scale continuous HDC encoding (SAX/RFF),
+expanded liquid state dimensionality (d=128/256), and longer sequence context horizons.
+
+--------------------------------------------------------------------------------
+2. FROZEN FINAL HDC-LNN CONFIGURATION
+--------------------------------------------------------------------------------
+1. Covariance Estimation: ReferenceManifold uses Ledoit-Wolf shrinkage covariance
+   estimator as default (`hdlnn/divergence/manifold.py`), providing an optimal,
+   well-conditioned precision matrix without arbitrary diagonal jitter tuning.
+2. Anomaly Decision Threshold: Calibrated via empirical F1-maximization on the
+   validation split (`hdlnn/divergence/scorer.py` and `hdlnn/eval/harness.py`).
+3. Evaluated & Verified Decision Runs:
+   - UNSW-NB15: `runs/final_optimized_hdclnn_unsw_nb15/decisions.csv`
+   - KDD-Test: `runs/final_optimized_hdclnn_kdd_test/decisions.csv`
+
+================================================================================
+3. SECTION 22: FULL-SCALE 5-BASELINE BENCHMARK COMPARISON TABLE
+================================================================================
+
+### A. UNSW_NB15_testing-set.csv (30,000 flows full-scale benchmark, N_test=4,613 flows):
+| Model Architecture | F1 Score | Precision | Recall | AUROC | PR-AUC | FPR @ 95% TPR | Latency (ms/flow) | Throughput (flows/s) | Peak RSS (MB) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Mamba-2 (Pure PyTorch SSM)** | **0.9923** | 0.9924 | **0.9921** | **0.9972** | **0.9991** | **0.0142** | 1.38 ms | 722.74 | 4830.91 |
+| **Autoencoder (LSTM-AE)** | 0.9525 | 0.9444 | 0.9606 | 0.9606 | 0.9867 | 0.1769 | 5.48 ms | 182.48 | **2389.66** |
+| **1D-CNN (Temporal Conv)** | 0.9297 | **0.9952** | 0.8723 | 0.9938 | 0.9979 | 0.0274 | 2.86 ms | 349.32 | 5384.56 |
+| **HDC-LNN (Optimized, Ours)** | 0.8719 | 0.8963 | 0.8487 | 0.8610 | 0.9598 | 0.8221 | **0.83 ms** | **1205.46** | 4856.62 |
+| **LSTM (Recurrent Baseline)** | 0.3265 | 0.9986 | 0.1952 | 0.7820 | 0.9292 | 0.8496 | 2.93 ms | 341.23 | 4615.88 |
+
+*(Note: Baselines reflect independently verified full-scale runs from `runs/full_scale_30k_results.json`).*
+
+---
+
+### B. kdd_test.csv (22,544 flows full-scale benchmark, N_test=3,466 flows):
+| Model Architecture | F1 Score | Precision | Recall | AUROC | PR-AUC | FPR @ 95% TPR | Latency (ms/flow) | Throughput (flows/s) | Peak RSS (MB) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Mamba-2 (Pure PyTorch SSM)** | **0.8523** | 0.7515 | **0.9845** | **0.9679** | **0.9700** | **0.1649** | **0.70 ms** | **1428.90** | 990.20 |
+| **LSTM (Recurrent Baseline)** | 0.8373 | 0.8062 | 0.8708 | 0.9003 | 0.8816 | 0.3505 | 2.20 ms | 455.26 | 1050.36 |
+| **HDC-LNN (Optimized, Ours)** | 0.8089 | **0.8183** | 0.7996 | 0.8541 | 0.8859 | 0.9441 | 0.72 ms | 1393.44 | 3739.97 |
+| **Autoencoder (LSTM-AE)** | 0.7989 | 0.8242 | 0.7752 | 0.8928 | 0.8545 | 0.3840 | 2.77 ms | 361.39 | **926.90** |
+| **1D-CNN (Temporal Conv)** | 0.7926 | 0.6862 | 0.9380 | 0.9121 | 0.9286 | 0.5206 | 1.73 ms | 579.22 | 1198.80 |
+
+================================================================================
+4. SECTION 23: HDC-LNN BEFORE / AFTER OPTIMIZATION TABLE (ALL 9 METRICS)
+================================================================================
+Note on Latency / Throughput: The decision threshold recalibration is a single float
+comparison with ~0 computational overhead. The observed latency and throughput variations
+between evaluation runs reflect normal run-to-run execution variance and system jitter,
+not algorithmic speedup. The load-bearing optimizations are the F1 score and recall
+improvements achieved by empirical threshold calibration and Ledoit-Wolf manifold fitting.
+
+### A. UNSW_NB15_testing-set.csv (N_test = 4,613 flows):
+| Metric Suite | Original Baseline HDC-LNN | Optimized HDC-LNN (Final) | Absolute Delta | Relative Gain |
+| :--- | :---: | :---: | :---: | :---: |
+| **F1 Score** | 0.677093 | **0.871876** | **+0.194783** | **+28.77%** |
+| **Precision** | 0.979244 | 0.896347 | -0.082897 | -8.47% |
+| **Recall** | 0.517435 | **0.848706** | **+0.331271** | **+64.02%** |
+| **AUROC** | 0.856808 | **0.860972** | **+0.004164** | **+0.49%** |
+| **PR-AUC** | 0.958066 | **0.959828** | **+0.001762** | **+0.18%** |
+| **FPR @ 95% TPR** | 0.822138 | 0.822138 | 0.000000 | 0.00% (Ranking invariant) |
+| **Latency (ms/flow)** | 0.9668 ms | 0.8296 ms | -0.1372 ms | (Run-to-run variance) |
+| **Throughput (flows/sec)**| 1034.36 | 1205.46 | +171.10 | (Run-to-run variance) |
+| **Peak RSS (MB)** | 4916.13 MB | 4856.62 MB | -59.51 MB | -1.21% memory |
+| **Confusion Matrix** | TP=1840, FP=39, FN=1716, TN=1018 | TP=3018, FP=349, FN=538, TN=708 | TP: +1178, FN: -1178 | Attack misses reduced 68.6% |
+
+---
+
+### B. kdd_test.csv (N_test = 3,466 flows):
+| Metric Suite | Original Baseline HDC-LNN | Optimized HDC-LNN (Final) | Absolute Delta | Relative Gain |
+| :--- | :---: | :---: | :---: | :---: |
+| **F1 Score** | 0.676056 | **0.808863** | **+0.132807** | **+19.64%** |
+| **Precision** | 0.924949 | 0.818290 | -0.106659 | -11.53% |
+| **Recall** | 0.532710 | **0.799650** | **+0.266940** | **+50.11%** |
+| **AUROC** | 0.862106 | 0.854059 | -0.008047 | -0.93% |
+| **PR-AUC** | 0.890166 | 0.885938 | -0.004228 | -0.47% |
+| **FPR @ 95% TPR** | 0.939567 | 0.944128 | +0.004561 | +0.49% |
+| **Latency (ms/flow)** | 1.1893 ms | 0.7176 ms | -0.4717 ms | (Run-to-run variance) |
+| **Throughput (flows/sec)**| 840.85 | 1393.44 | +552.59 | (Run-to-run variance) |
+| **Peak RSS (MB)** | 3718.46 MB | 3739.97 MB | +21.51 MB | +0.58% memory |
+| **Confusion Matrix** | TP=912, FP=74, FN=800, TN=1680 | TP=1369, FP=304, FN=343, TN=1450 | TP: +457, FN: -457 | Attack misses reduced 57.1% |
+
+================================================================================
+5. VERIFICATION & REPRODUCIBILITY
+================================================================================
+All numbers above are independently computed from output `decisions.csv` logs using
+standard `scikit-learn` metrics:
+- UNSW Decisions: [`runs/final_optimized_hdclnn_unsw_nb15/decisions.csv`](file:///c:/Works/HDC_LNN/Dilip_1/HDC-LNN2/runs/final_optimized_hdclnn_unsw_nb15/decisions.csv)
+- KDD Decisions: [`runs/final_optimized_hdclnn_kdd_test/decisions.csv`](file:///c:/Works/HDC_LNN/Dilip_1/HDC-LNN2/runs/final_optimized_hdclnn_kdd_test/decisions.csv)
+- Summary JSON: [`runs/final_optimized_hdclnn_summary.json`](file:///c:/Works/HDC_LNN/Dilip_1/HDC-LNN2/runs/final_optimized_hdclnn_summary.json)
+================================================================================

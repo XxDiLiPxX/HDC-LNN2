@@ -1,32 +1,48 @@
+# Byte-compiled / optimized / ambient python artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 
+# Python virtual environments
 .venv/
 .venv*/
 env/
 venv/
 ENV/
+build/
+dist/
+*.egg-info/
 
+# Testing, typing & coverage
 .pytest_cache/
 .coverage
 htmlcov/
+.mypy_cache/
 
+# Runtime logging & lockfiles
 *.log
-soar_alerts.log
-task_report.txt
+*.sqlite3
+*.db
 
-runs/*
-!runs/README.md
+# Bulky experimental runs directory (raw outputs, large parquet logs, decision records)
+runs/
 data/
 hdlnn/deploy/uploads/
 
-datasets/*
-!datasets/README.md
+# Raw dataset files (heavy CSVs up to 200MB+; see datasets/SOURCES.md for canonical links)
+datasets/*.csv
+datasets/*/*.csv
 *.csv
-train_test_network.csv
 
+# Local IDE & editor configuration
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables & secrets
 .env
 .env.*
 !.env.example

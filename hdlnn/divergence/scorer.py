@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import logging
 from typing import Dict, Optional, Tuple, Any
@@ -59,6 +60,33 @@ class DivergenceScorer(IDivergenceScorer):
             f"Mahalanobis threshold fit: mean={mean_dist:.4f}, std={std_dist:.4f}, "
             f"k={self.threshold_k}, final_threshold={self.mahalanobis_threshold:.4f}"
         )
+
+    def fit_f1_max_threshold(self, normal_states: torch.Tensor, val_states: torch.Tensor, val_labels: np.ndarray) -> float:
+        """Fits ReferenceManifold on normal states and calibrates F1-maximizing threshold on validation split."""
+        if self.mode != "mahalanobis":
+            return self.mahalanobis_threshold
+            
+        # Fit the manifold
+        self.manifold.fit(normal_states)
+        
+        # Score validation states
+        val_dists = self.manifold.compute_mahalanobis_distance(val_states).detach().cpu().numpy()
+
+        from sklearn.metrics import f1_score
+        
+        candidates = np.linspace(float(np.min(val_dists)), float(np.max(val_dists)), 1000)
+        best_f1 = -1.0
+        best_th = float(candidates[0])
+        for th in candidates:
+            preds = (val_dists > th).astype(int)
+            f1 = f1_score(val_labels, preds, zero_division=0)
+            if f1 > best_f1:
+                best_f1 = float(f1)
+                best_th = float(th)
+                
+        self.mahalanobis_threshold = best_th
+        logger.info(f"Validation F1-Max Mahalanobis threshold calibrated: threshold={best_th:.4f}, val_f1={best_f1:.4f}")
+        return best_th
 
     def score(self, state: TrajectoryState) -> AnomalyDecision:
         """Computes behavioral drift against reference manifold or LNN next-state predictions."""
