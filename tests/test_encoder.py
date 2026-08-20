@@ -1,6 +1,5 @@
 import pytest
 import torch
-import torchhd
 from hdlnn.contracts.schemas import CanonicalFlow
 from hdlnn.hdc.encoder import RecordEncoder
 
@@ -67,10 +66,11 @@ def test_record_encoder_bipolar_output_and_oov_detection():
     v_0_3 = encoder.codebooks.get_numerical_vector("dur", 0.3)
     v_0_5 = encoder.codebooks.get_numerical_vector("dur", 0.5)
 
-    sim_1_3 = torchhd.cosine_similarity(v_0_1, v_0_3)
-    sim_3_5 = torchhd.cosine_similarity(v_0_3, v_0_5)
-    sim_1_5 = torchhd.cosine_similarity(v_0_1, v_0_5)
+    sim_1_3 = torch.cosine_similarity(v_0_1.unsqueeze(0), v_0_3.unsqueeze(0)).item()
+    sim_3_5 = torch.cosine_similarity(v_0_3.unsqueeze(0), v_0_5.unsqueeze(0)).item()
+    sim_1_5 = torch.cosine_similarity(v_0_1.unsqueeze(0), v_0_5.unsqueeze(0)).item()
 
     # 0.1 to 0.3 distance is closer than 0.1 to 0.5 distance, so similarity should be higher
     assert sim_1_3 > sim_1_5
     assert sim_3_5 > sim_1_5
+

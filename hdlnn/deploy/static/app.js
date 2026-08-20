@@ -81,34 +81,34 @@ function handleSelectedFile(file) {
         return;
     }
     fileName.textContent = file.name;
-    
+
     // Upload file immediately via fetch
     const formData = new FormData();
     formData.append('file', file);
-    
+
     updateStatus('orange', 'Uploading File...');
-    
+
     fetch('/api/upload', {
         method: 'POST',
         body: formData
     })
-    .then(res => res.json())
-    .then(data => {
-        if (data.status === 'success') {
-            currentUploadedFileName = file.name;
-            btnStart.disabled = false;
-            updateStatus('green', 'Ready to Ingest');
-            logTerminalLine(`[SYSTEM] Loaded dataset '${file.name}' successfully. Press Start to stream.`, 'system-line');
-        } else {
-            alert('Upload failed: ' + data.message);
-            updateStatus('red', 'Upload Error');
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        alert('Error uploading file: ' + err.message);
-        updateStatus('red', 'Server Disconnected');
-    });
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                currentUploadedFileName = file.name;
+                btnStart.disabled = false;
+                updateStatus('green', 'Ready to Ingest');
+                logTerminalLine(`[SYSTEM] Loaded dataset '${file.name}' successfully. Press Start to stream.`, 'system-line');
+            } else {
+                alert('Upload failed: ' + data.message);
+                updateStatus('red', 'Upload Error');
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Error uploading file: ' + err.message);
+            updateStatus('red', 'Server Disconnected');
+        });
 }
 
 // Status updating utility
@@ -125,7 +125,7 @@ function logTerminalLine(text, cssClass) {
     line.textContent = text;
     alertsConsole.appendChild(line);
     alertsConsole.scrollTop = alertsConsole.scrollHeight;
-    
+
     // Cap log lines inside browser to prevent memory bloat
     if (alertsConsole.children.length > 200) {
         alertsConsole.removeChild(alertsConsole.firstChild);
@@ -257,7 +257,7 @@ function updateCharts(flowIndex, score, threshold, isAnomaly, latency, category)
         threatCounts[key] = 0;
     }
     threatCounts[key]++;
-    
+
     threatChart.data.labels = Object.keys(threatCounts);
     threatChart.data.datasets[0].data = Object.values(threatCounts);
     threatChart.update();
@@ -272,7 +272,7 @@ btnStart.addEventListener('click', () => {
     jitterSum = 0.0;
     lastLatency = 0.0;
     threatCounts = { "Normal": 0 };
-    
+
     // Reset KPIs
     kpiProcessed.textContent = "0";
     kpiProgress.textContent = "0% of target";
@@ -281,36 +281,36 @@ btnStart.addEventListener('click', () => {
     kpiAnomalies.textContent = "0";
     kpiRate.textContent = "Drift Rate: 0.0%";
     kpiThroughput.textContent = "0.0 /s";
-    
+
     // Clear and redraw charts
     if (scoreChart) scoreChart.destroy();
     if (latencyChart) latencyChart.destroy();
     if (threatChart) threatChart.destroy();
     initCharts();
-    
+
     logTerminalLine("[SYSTEM] Initializing Streaming Ingest Sidecar loop...", "system-line");
     updateStatus('orange', 'Ingesting...');
-    
+
     btnStart.disabled = true;
     btnStop.disabled = false;
     dropZone.style.pointerEvents = 'none';
-    
+
     // Build query args
     const speed = speedLimit.value || 100;
     const limit = limitRows.value || 5000;
     const k = driftThreshold.value || 3.0;
-    
+
     // Initialize SSE streaming EventSource
     const sseUrl = `/api/stream?speed=${speed}&limit=${limit}&k=${k}`;
     activeEventSource = new EventSource(sseUrl);
-    
+
     activeEventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        
+
         if (data.type === 'progress') {
             totalProcessed = data.processed;
             totalAnomalies = data.anomalies;
-            
+
             // Statistics calculation
             const progressPercent = Math.min(100, Math.round((totalProcessed / limit) * 100));
             kpiProcessed.textContent = totalProcessed;
@@ -318,15 +318,15 @@ btnStart.addEventListener('click', () => {
             kpiAnomalies.textContent = totalAnomalies;
             kpiRate.textContent = `Drift Rate: ${((totalAnomalies / totalProcessed) * 100).toFixed(1)}%`;
             kpiThroughput.textContent = `${data.throughput.toFixed(1)} /s`;
-            
+
             // Latency statistics
             const lat = data.latency * 1000.0; // convert to ms
             latencies.push(lat);
             if (latencies.length > 200) latencies.shift();
-            
+
             const avgLat = latencies.reduce((a, b) => a + b, 0) / latencies.length;
             kpiLatency.textContent = `${avgLat.toFixed(2)} ms`;
-            
+
             // Jitter calculation (average difference between sequential latencies)
             if (lastLatency > 0.0) {
                 const jitter = Math.abs(lat - lastLatency);
@@ -334,24 +334,24 @@ btnStart.addEventListener('click', () => {
             }
             lastLatency = lat;
             kpiJitter.textContent = `Jitter: ${jitterSum.toFixed(2)} ms`;
-            
+
             // Update charts
             updateCharts(data.index, data.score, data.threshold, data.is_anomaly, lat, data.attack_cat);
-            
+
         } else if (data.type === 'alert') {
             // Print alert in console
             logTerminalLine(`🚨 [CEF ALERT] ${data.alert_text}`, 'alert-line');
-            
+
         } else if (data.type === 'system') {
             logTerminalLine(`[SYSTEM] ${data.message}`, 'system-line');
-            
+
         } else if (data.type === 'complete') {
             logTerminalLine(`[SYSTEM] Ingestion simulation completed successfully.`, 'system-line');
             logTerminalLine(`[SYSTEM] Stats: ${data.total_processed} flows processed. ${data.total_anomalies} anomalies alerts triggered. Avg Latency: ${data.avg_latency_ms.toFixed(2)} ms.`, 'system-line');
             stopSimulation('Standby', 'green');
         }
     };
-    
+
     activeEventSource.onerror = (err) => {
         console.error("SSE stream error: ", err);
         logTerminalLine("[SYSTEM ERROR] SSE connection dropped unexpectedly.", "alert-line");

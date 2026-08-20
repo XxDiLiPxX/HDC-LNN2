@@ -16,7 +16,7 @@ class DivergenceScorer(IDivergenceScorer):
         threshold_k: float = 3.0,
         alpha: float = 0.05,
         hidden_dim: int = 64,
-        warmup_steps: int = 10,
+        warmup_steps: int = 0,
         model: Optional[Any] = None
     ):
         self.mode = mode.lower()
@@ -25,6 +25,7 @@ class DivergenceScorer(IDivergenceScorer):
         self.hidden_dim = hidden_dim
         self.warmup_steps = warmup_steps
         self.model = model
+        self.initial_threshold = 1.0
         
         # Mahalanobis components
         self.manifold = ReferenceManifold(hidden_dim=hidden_dim)
@@ -117,8 +118,8 @@ class DivergenceScorer(IDivergenceScorer):
             # Initialize statistics
             mean_ewma = cosine_dist
             var_ewma = 0.0
-            threshold = 1.0  # Safe initial threshold
-            is_anomaly = False
+            threshold = self.initial_threshold
+            is_anomaly = (cosine_dist > threshold) if (self.warmup_steps == 0 and threshold < 1.0) else False
         else:
             diff = cosine_dist - mean_ewma
             # Update mean EWMA

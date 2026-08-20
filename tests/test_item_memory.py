@@ -1,6 +1,5 @@
 import pytest
 import torch
-import torchhd
 from hdlnn.hdc.item_memory import ItemMemory
 
 def test_item_memory_dynamic_registration_and_oov_locking():

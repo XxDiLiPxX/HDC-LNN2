@@ -28,7 +28,7 @@ def main():
     parser.add_argument(
         "--baseline", 
         default="hdc-lnn",
-        choices=["hdc-lnn", "lstm", "cnn", "hdc-only", "lnn-only"],
+        choices=["hdc-lnn", "lstm", "cnn", "autoencoder", "mamba2", "hdc-only", "lnn-only"],
         help="Baseline model configuration to train or evaluate."
     )
     parser.add_argument(
@@ -46,6 +46,16 @@ def main():
         "--config-dataset", 
         default="configs/dataset_unsw_nb15.yaml",
         help="Path to dataset-specific config YAML."
+    )
+    parser.add_argument(
+        "--source-file",
+        default=None,
+        help="Path to the local CSV file to process."
+    )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Optional run identifier to use instead of the baseline default."
     )
     
     args = parser.parse_args()
@@ -72,7 +82,7 @@ def main():
     if args.mode == "ablate":
         # Ablate mode: run all baselines sequentially and report comparative stats
         logger.info("Running ablation study comparing all models...")
-        baselines = ["hdc-lnn", "lstm", "cnn", "hdc-only", "lnn-only"]
+        baselines = ["hdc-lnn", "lstm", "cnn", "autoencoder", "hdc-only", "lnn-only"]
         
         for baseline in baselines:
             run_id = f"{baseline}_run"
@@ -83,7 +93,8 @@ def main():
                     baseline_name=baseline,
                     inject_attacks=True,
                     limit=args.limit,
-                    output_dir=runs_dir
+                    output_dir=runs_dir,
+                    source_file=args.source_file
                 )
                 # Plot ROC curve for this baseline
                 save_roc_plot(runs_dir / run_id)
@@ -95,7 +106,7 @@ def main():
         
     elif args.mode in ("train", "eval"):
         # Single baseline execution
-        run_id = f"{args.baseline}_single_run"
+        run_id = args.run_id or f"{args.baseline}_single_run"
         try:
             run_experiment(
                 config=config,
@@ -103,7 +114,8 @@ def main():
                 baseline_name=args.baseline,
                 inject_attacks=True,
                 limit=args.limit,
-                output_dir=runs_dir
+                output_dir=runs_dir,
+                source_file=args.source_file
             )
             save_roc_plot(runs_dir / run_id)
             # Re-generate summary table to include this new single run

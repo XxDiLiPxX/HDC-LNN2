@@ -1,5 +1,4 @@
 import torch
-import torchhd
 import logging
 from typing import Dict, List, Tuple, Any
 
@@ -14,15 +13,34 @@ class CodebookManager:
         self.D = D
         self.num_levels = num_levels
         self.key_vectors: Dict[str, torch.Tensor] = {}
-        # Pre-generate level hypervectors using torchhd's linear level method
-        self.level_vectors = torchhd.level(num_levels, D)
+        # Pre-generate level hypervectors with a deterministic bipolar ramp.
+        self.level_vectors = self._build_level_vectors(num_levels, D)
         self.min_max: Dict[str, Tuple[float, float]] = {}
+
+    def _build_level_vectors(self, num_levels: int, D: int) -> torch.Tensor:
+        """Create a stable sequence of bipolar vectors for numeric binning."""
+        if num_levels <= 1:
+            return torch.ones((1, D), dtype=torch.float32)
+
+        base = torch.randint(0, 2, (D,), dtype=torch.int8).float() * 2.0 - 1.0
+        levels = [base]
+        current = base.clone()
+        flip_stride = max(1, D // max(1, num_levels))
+
+        for idx in range(1, num_levels):
+            current = current.clone()
+            flip_start = ((idx - 1) * flip_stride) % D
+            flip_end = min(D, flip_start + flip_stride)
+            current[flip_start:flip_end] *= -1.0
+            levels.append(current)
+
+        return torch.stack(levels)
 
     def get_key_vector(self, key: str) -> torch.Tensor:
         """Retrieves or generates a unique random hypervector for a given field key."""
         if key not in self.key_vectors:
             # Generate a random bipolar/bipolar-compatible hypervector for the key
-            self.key_vectors[key] = torchhd.random(1, self.D).squeeze(0)
+            self.key_vectors[key] = torch.randint(0, 2, (self.D,), dtype=torch.int8).float() * 2.0 - 1.0
         return self.key_vectors[key]
 
     def fit_numerical_ranges(self, train_flows: List[Any], numerical_columns: List[str]):

@@ -36,10 +36,10 @@ from typing import Tuple
 
 def save_roc_plot(run_dir: Path, output_filename: str = "roc_curve.png") -> None:
     """Generates the ROC curve plot from run decisions.parquet and saves it as an image."""
-    run_dir = Path(run_dir)
-    decisions_file = run_dir / "decisions.parquet"
-    if not decisions_file.exists():
-        logger.warning(f"No decisions.parquet found at {run_dir}, skipping ROC plotting.")
+    decisions_parquet = run_dir / "decisions.parquet"
+    decisions_csv = run_dir / "decisions.csv"
+    if not decisions_parquet.exists() and not decisions_csv.exists():
+        logger.warning(f"No decisions file (parquet or csv) found at {run_dir}, skipping ROC plotting.")
         return
 
     try:
@@ -49,7 +49,10 @@ def save_roc_plot(run_dir: Path, output_filename: str = "roc_curve.png") -> None
         return
 
     try:
-        df = pd.read_parquet(decisions_file)
+        if decisions_parquet.exists():
+            df = pd.read_parquet(decisions_parquet)
+        else:
+            df = pd.read_csv(decisions_csv)
         labels = df["actual_label"].values
         scores = df["drift_score"].values
         

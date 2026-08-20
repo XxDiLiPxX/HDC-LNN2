@@ -109,9 +109,17 @@ body {
 }
 
 @keyframes pulse {
-    0% { opacity: 0.5; }
-    50% { opacity: 1; }
-    100% { opacity: 0.5; }
+    0% {
+        opacity: 0.5;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0.5;
+    }
 }
 
 /* Layout Core */
@@ -161,7 +169,8 @@ body {
     transition: all 0.3s ease;
 }
 
-.upload-area:hover, .upload-area.drag-over {
+.upload-area:hover,
+.upload-area.drag-over {
     border-color: var(--accent-blue);
     background-color: rgba(0, 242, 254, 0.05);
 }

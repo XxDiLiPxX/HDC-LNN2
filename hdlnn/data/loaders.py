@@ -1,157 +1,118 @@
-import urllib.request
 import csv
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional
+
 from hdlnn.contracts.schemas import CanonicalFlow
 
 logger = logging.getLogger(__name__)
 
-def download_file(url: str, dest_path: Path):
-    """Downloads a file from a URL to dest_path if it doesn't already exist."""
-    if dest_path.exists():
-        logger.info(f"File already exists at {dest_path}")
-        return
-    
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Downloading {url} to {dest_path}...")
-    req = urllib.request.Request(url, headers={'User-Agent': 'AntigravityAgent/1.0'})
+
+def _to_float(value: Any, default: float = 0.0) -> float:
     try:
-        with urllib.request.urlopen(req) as response:
-            with open(dest_path, 'wb') as f:
-                f.write(response.read())
-        logger.info("Download completed successfully.")
-    except Exception as e:
-        logger.error(f"Failed to download file from {url}: {e}")
-        raise e
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-def load_raw_unsw_nb15(
-    config: Any, 
-    data_dir: Path, 
-    limit: int = None
+
+import math
+
+def _normalize_label(value: Any) -> int:
+    if value is None:
+        return 0
+    text = str(value).strip().lower()
+    if text in {"0", "0.0", "normal", "benign", "legit", "legitimate", "false", "", "-", "nan", "null", "none"}:
+        return 0
+    if text in {"1", "1.0", "attack", "malicious", "true"}:
+        return 1
+    try:
+        f_val = float(text)
+        if math.isnan(f_val):
+            return 0
+        return 1 if f_val != 0.0 else 0
+    except ValueError:
+        # Non-numeric attack category names like 'exploits', 'dos', 'fuzzers', 'neptune', 'smurf', etc.
+        return 1
+
+
+def _load_csv_as_flows(
+    csv_path: Path,
+    categorical_columns: List[str],
+    numerical_columns: List[str],
+    label_column: str,
+    entity_id_column: Optional[str] = None,
+    sublabel_column: Optional[str] = None,
+    limit: Optional[int] = None,
+    entity_id_modulo: int = 254,
+    stride: int = 1,
 ) -> List[CanonicalFlow]:
-    """Downloads (if necessary) and loads the UNSW-NB15 training and testing CSVs.
-    
-    Synthesizes entity_id (based on row_id modulo) and timestamps (accumulated dur).
-    """
-    cache_dir = Path(data_dir) / config.data.get("cache_dir", "data/raw")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    urls = {
-        "train": "https://raw.githubusercontent.com/Nir-J/ML-Projects/master/UNSW-Network_Packet_Classification/UNSW_NB15_training-set.csv",
-        "test": "https://raw.githubusercontent.com/Nir-J/ML-Projects/master/UNSW-Network_Packet_Classification/UNSW_NB15_testing-set.csv"
-    }
-    
-    files = {
-        "train": cache_dir / "UNSW_NB15_training-set.csv",
-        "test": cache_dir / "UNSW_NB15_testing-set.csv"
-    }
-
-    # Download if missing
-    for split_key, url in urls.items():
-        download_file(url, files[split_key])
-
-    # Feature definitions
-    categorical_cols = [
-        "proto", "service", "state", "is_ftp_login", "is_sm_ips_ports"
-    ]
-    numerical_cols = [
-        "dur", "spkts", "dpkts", "sbytes", "dbytes", "rate", "sttl", "dttl",
-        "sload", "dload", "sloss", "dloss", "sinpkt", "dinpkt", "sjit", "djit",
-        "swin", "stcpb", "dtcpb", "dwin", "tcprtt", "synack", "ackdat", "smean",
-        "dmean", "trans_depth", "response_body_len", "ct_srv_src", "ct_state_ttl",
-        "ct_dst_ltm", "ct_src_dport_ltm", "ct_dst_sport_ltm", "ct_dst_src_ltm",
-        "ct_ftp_cmd", "ct_flw_http_mthd", "ct_src_ltm", "ct_srv_dst"
-    ]
-    all_headers = [
-        "id", "dur", "proto", "service", "state", "spkts", "dpkts", "sbytes",
-        "dbytes", "rate", "sttl", "dttl", "sload", "dload", "sloss", "dloss",
-        "sinpkt", "dinpkt", "sjit", "djit", "swin", "stcpb", "dtcpb", "dwin",
-        "tcprtt", "synack", "ackdat", "smean", "dmean", "trans_depth",
-        "response_body_len", "ct_srv_src", "ct_state_ttl", "ct_dst_ltm",
-        "ct_src_dport_ltm", "ct_dst_sport_ltm", "ct_dst_src_ltm", "is_ftp_login",
-        "ct_ftp_cmd", "ct_flw_http_mthd", "ct_src_ltm", "ct_srv_dst",
-        "is_sm_ips_ports", "attack_cat", "label"
-    ]
-
     flows: List[CanonicalFlow] = []
     global_time = 0.0
-    row_count = 0
 
-    # Load both files to form the full base set
-    for split_key in ["train", "test"]:
-        file_path = files[split_key]
-        logger.info(f"Parsing {file_path}...")
-        with open(file_path, "r", newline="", encoding="utf-8-sig") as f:
-            reader = csv.reader(f)
-            # Detect header row and skip if present
-            try:
-                first_row = next(reader)
-                if first_row and first_row[0] == "id":
-                    # Header present, proceed
-                    pass
-                else:
-                    # No header, rewind or parse first row
-                    f.seek(0)
-                    reader = csv.reader(f)
-            except StopIteration:
+    with open(csv_path, "r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row_idx, row in enumerate(reader):
+            if not row:
+                continue
+            if stride > 1 and (row_idx % stride != 0):
                 continue
 
-            for row in reader:
-                if not row:
-                    continue
-                
-                # Map columns to their values
-                row_dict = dict(zip(all_headers, row))
-                
-                # Parse label
-                try:
-                    label = int(row_dict.get("label", 0))
-                except ValueError:
-                    label = 0
+            entity_id = row.get(entity_id_column, "") if entity_id_column else ""
+            if not entity_id or entity_id == "-" or entity_id.lower() == "nan":
+                entity_id = f"10.0.0.{(row_idx % entity_id_modulo) + 1}"
 
-                # Simulate entity_id using modulo mapping
-                entity_modulo = config.data.get("entity_id_modulo", 254)
-                entity_id = f"10.0.0.{(row_count % entity_modulo) + 1}"
+            dur = _to_float(row.get("dur", row.get("duration", 0.0)))
+            global_time += max(dur, 0.001)
 
-                # Parse duration to advance global clock
-                try:
-                    dur = float(row_dict.get("dur", 0.0))
-                except ValueError:
-                    dur = 0.0
-                # Advance global timestamp (ensure monotonic progression)
-                global_time += max(dur, 0.001)
-                timestamp = global_time
+            categorical_fields = {col: str(row.get(col, "-")) for col in categorical_columns}
+            numerical_fields = {col: _to_float(row.get(col, 0.0)) for col in numerical_columns}
 
-                # Map categorical fields
-                categorical_fields: Dict[str, str] = {}
-                for col in categorical_cols:
-                    categorical_fields[col] = row_dict.get(col, "-")
+            label_val = row.get(label_column, None)
+            if label_val is not None and label_val != "":
+                label = _normalize_label(label_val)
+            elif sublabel_column:
+                label = _normalize_label(row.get(sublabel_column, 0))
+            else:
+                label = 0
 
-                # Map numerical fields
-                numerical_fields: Dict[str, float] = {}
-                for col in numerical_cols:
-                    try:
-                        numerical_fields[col] = float(row_dict.get(col, 0.0))
-                    except ValueError:
-                        numerical_fields[col] = 0.0
-
-                flow = CanonicalFlow(
+            flows.append(
+                CanonicalFlow(
                     entity_id=entity_id,
-                    timestamp=timestamp,
-                    dt=0.0,  # Computed later in splitter
+                    timestamp=global_time,
+                    dt=0.0,
                     categorical_fields=categorical_fields,
                     numerical_fields=numerical_fields,
                     label=label,
-                    split=""  # Assigned later in splitter
+                    split="",
                 )
-                flows.append(flow)
-                row_count += 1
+            )
 
-                if limit and row_count >= limit:
-                    break
-        if limit and row_count >= limit:
-            break
+            if limit and len(flows) >= limit:
+                break
 
-    logger.info(f"Loaded {len(flows)} raw records successfully.")
+    logger.info("Loaded %s rows from %s (stride=%s)", len(flows), csv_path, stride)
     return flows
+
+
+def load_dataset_flows(config: Any, data_dir: Path, source_file: str, limit: Optional[int] = None, stride: int = 1) -> List[CanonicalFlow]:
+    csv_path = Path(source_file)
+    if not csv_path.is_absolute():
+        csv_path = Path(data_dir) / csv_path
+
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Source CSV not found: {csv_path}")
+
+    entity_id_column = config.data.get("entity_id_column")
+    return _load_csv_as_flows(
+        csv_path=csv_path,
+        categorical_columns=list(config.categorical_columns),
+        numerical_columns=list(config.numerical_columns),
+        label_column=config.label_column,
+        entity_id_column=entity_id_column,
+        sublabel_column=config.get("sublabel_column", None),
+        limit=limit,
+        entity_id_modulo=config.data.get("entity_id_modulo", 254),
+        stride=stride,
+    )

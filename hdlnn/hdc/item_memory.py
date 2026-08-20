@@ -1,5 +1,4 @@
 import torch
-import torchhd
 import logging
 from typing import Dict, Tuple, Set, List
 
@@ -43,7 +42,7 @@ class ItemMemory:
         # Ensure category structures exist
         if key not in self.vocab_ids:
             self.vocab_ids[key] = {"<OOV>": 0}
-            self.vocab_vectors_list[key] = [torchhd.random(1, self.D).squeeze(0)]
+            self.vocab_vectors_list[key] = [self._random_bipolar_vector()]
             if self.locked:
                 self.vocab_tensors[key] = torch.stack(self.vocab_vectors_list[key])
 
@@ -61,7 +60,7 @@ class ItemMemory:
             return self.vocab_tensors[key][0], True
         else:
             # Register new token
-            new_vector = torchhd.random(1, self.D).squeeze(0)
+            new_vector = self._random_bipolar_vector()
             idx = len(vocab_col)
             vocab_col[value] = idx
             self.vocab_vectors_list[key].append(new_vector)
@@ -72,7 +71,7 @@ class ItemMemory:
         if key not in self.vocab_ids:
             # Initialize empty category
             self.vocab_ids[key] = {"<OOV>": 0}
-            self.vocab_vectors_list[key] = [torchhd.random(1, self.D).squeeze(0)]
+            self.vocab_vectors_list[key] = [self._random_bipolar_vector()]
             if self.locked:
                 self.vocab_tensors[key] = torch.stack(self.vocab_vectors_list[key])
 
@@ -90,5 +89,9 @@ class ItemMemory:
             # Temporary fallback if called before locking
             tensors_list = self.vocab_vectors_list[key]
             val_tensor = torch.stack([tensors_list[idx] for idx in indices])
-            
+        
         return val_tensor, is_oov
+
+    def _random_bipolar_vector(self) -> torch.Tensor:
+        """Generate a random bipolar vector without requiring torchhd."""
+        return torch.randint(0, 2, (self.D,), dtype=torch.int8).float() * 2.0 - 1.0

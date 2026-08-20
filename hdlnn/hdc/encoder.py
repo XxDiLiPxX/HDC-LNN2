@@ -1,5 +1,4 @@
 import torch
-import torchhd
 import logging
 from typing import List, Dict, Any
 from hdlnn.contracts.interfaces import IEncoder
