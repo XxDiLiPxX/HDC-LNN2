@@ -64,6 +64,11 @@ source .venv/bin/activate
 
 *(You will see `(.venv)` in your terminal prompt).*
 
+### Step 2: Dataset & Runs Directory Setup
+- `datasets/` and `runs/` folders exist in the repository structure but are intentionally kept empty of data in git tracking (`.gitignore`).
+- Download benchmark datasets (e.g. UNSW-NB15, NSL-KDD, CICIoT2023) and place the CSV files directly inside `datasets/`. See [`datasets/README.md`](datasets/README.md) for details and expected file names.
+- The `runs/` directory is automatically populated with `metrics.json`, `decisions.parquet`, and `roc_curve.png` whenever evaluation or training is run. It is normal and expected for `runs/` to be empty on a fresh clone. See [`runs/README.md`](runs/README.md).
+
 ---
 
 ## 🚀 Running the Baseline Benchmark Suite
@@ -199,12 +204,13 @@ Every benchmark execution saves structured, verifiable artifacts:
 ```
 HDC-LNN2/
 ├── final_comparison_table.md       # Master benchmark comparison table + architectural ranking
-├── task_report.txt                 # Detailed verification log & sklearn parity audits
-├── dataset_runs_summary.md         # Multi-dataset batch evaluation summary
-└── runs/
+├── datasets/                       # Local raw benchmark CSVs (gitignored except README)
+│   └── README.md
+└── runs/                           # Generated evaluation runs & checkpoints (gitignored except README)
+    ├── README.md
     ├── <run_id>/
     │   ├── metrics.json            # Confusion matrix, F1, AUROC, latency, RSS, throughput
-    │   ├── decisions.csv           # Per-flow actual label, predicted label, drift score, timestamp
+    │   ├── decisions.parquet       # Per-flow actual label, predicted label, drift score, timestamp
     │   └── config.yaml             # Exact snapshot of hyperparameters used for reproducibility
     └── encoder_separability.json   # Geometric clustering & separability metrics
 ```

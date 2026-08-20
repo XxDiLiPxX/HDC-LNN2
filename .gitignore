@@ -17,11 +17,13 @@ htmlcov/
 soar_alerts.log
 task_report.txt
 
-runs/
+runs/*
+!runs/README.md
 data/
 hdlnn/deploy/uploads/
 
-datasets/
+datasets/*
+!datasets/README.md
 *.csv
 train_test_network.csv
 
