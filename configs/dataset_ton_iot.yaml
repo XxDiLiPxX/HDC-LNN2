@@ -1,0 +1,106 @@
+dataset_name: "ton_iot"
+cache_dir: "datasets"
+entity_id_modulo: 254
+entity_id_column: "src_ip"
+
+download_urls: {}
+
+columns:
+  - ts
+  - src_ip
+  - src_port
+  - dst_ip
+  - dst_port
+  - proto
+  - service
+  - duration
+  - src_bytes
+  - dst_bytes
+  - conn_state
+  - missed_bytes
+  - src_pkts
+  - src_ip_bytes
+  - dst_pkts
+  - dst_ip_bytes
+  - dns_query
+  - dns_qclass
+  - dns_qtype
+  - dns_rcode
+  - dns_AA
+  - dns_RD
+  - dns_RA
+  - dns_rejected
+  - ssl_version
+  - ssl_cipher
+  - ssl_resumed
+  - ssl_established
+  - ssl_subject
+  - ssl_issuer
+  - http_trans_depth
+  - http_method
+  - http_uri
+  - http_version
+  - http_request_body_len
+  - http_response_body_len
+  - http_status_code
+  - http_user_agent
+  - http_orig_mime_types
+  - http_resp_mime_types
+  - weird_name
+  - weird_addl
+  - weird_notice
+  - label
+  - type
+
+categorical_columns:
+  - src_ip
+  - dst_ip
+  - proto
+  - service
+  - conn_state
+  - dns_query
+  - ssl_version
+  - ssl_cipher
+  - ssl_subject
+  - ssl_issuer
+  - http_method
+  - http_uri
+  - http_version
+  - http_user_agent
+  - http_orig_mime_types
+  - http_resp_mime_types
+  - weird_name
+  - weird_addl
+  - weird_notice
+
+numerical_columns:
+  - duration
+  - src_bytes
+  - dst_bytes
+  - missed_bytes
+  - src_pkts
+  - src_ip_bytes
+  - dst_pkts
+  - dst_ip_bytes
+  - dns_qclass
+  - dns_qtype
+  - dns_rcode
+  - dns_AA
+  - dns_RD
+  - dns_RA
+  - dns_rejected
+  - ssl_resumed
+  - ssl_established
+  - http_trans_depth
+  - http_request_body_len
+  - http_response_body_len
+  - http_status_code
+
+label_column: "label"
+sublabel_column: "type"
+
+pipeline:
+  frozen_baseline_path: frozen_baseline_ton_iot.pt
+divergence:
+  mode: "mahalanobis"
+  threshold_k: 1.0

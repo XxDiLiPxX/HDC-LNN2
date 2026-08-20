@@ -61,13 +61,24 @@ class LSTMBaseline(nn.Module, ISequenceModel):
         if isinstance(h_prev, torch.Tensor):
             if h_prev.dim() == 1:
                 h_prev = h_prev.unsqueeze(0)
-            # Add layer dimension [1, batch_size, hidden_dim] and zeros for cell state
-            hx = (h_prev.unsqueeze(0), torch.zeros((1, h_prev.size(0), self.hidden_dim), device=h_prev.device, dtype=h_prev.dtype))
+            
+            # Check if h_prev is composite [batch_size, 2 * hidden_dim] containing (h, c)
+            if h_prev.size(-1) == 2 * self.hidden_dim:
+                h0 = h_prev[:, :self.hidden_dim].unsqueeze(0)
+                c0 = h_prev[:, self.hidden_dim:].unsqueeze(0)
+                hx = (h0, c0)
+            elif h_prev.size(-1) == self.hidden_dim:
+                h0 = h_prev.unsqueeze(0)
+                c0 = torch.zeros_like(h0)
+                hx = (h0, c0)
+            else:
+                hx = (h_prev.unsqueeze(0), torch.zeros((1, h_prev.size(0), self.hidden_dim), device=h_prev.device, dtype=h_prev.dtype))
         else:
             hx = h_prev
 
-        _, (h_n, _) = self.lstm(x_seq, hx)
-        return h_n.squeeze(0)
+        _, (h_n, c_n) = self.lstm(x_seq, hx)
+        # Return composite state [h_n, c_n] of shape [batch_size, 2 * hidden_dim]
+        return torch.cat([h_n.squeeze(0), c_n.squeeze(0)], dim=-1)
 
     def predict_next_vector(self, state: torch.Tensor) -> torch.Tensor:
         """Projects hidden state vector back to hypervector space (D)."""

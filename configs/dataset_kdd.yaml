@@ -101,4 +101,5 @@ sublabel_column: "labels"
 pipeline:
   frozen_baseline_path: frozen_baseline_kdd.pt
 divergence:
-  mode: "hdc_cosine"
+  mode: "mahalanobis"
+  threshold_k: 1.0

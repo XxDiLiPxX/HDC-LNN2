@@ -12,9 +12,13 @@ def get_config_for_dataset(filepath: Path):
             
         first_row_split = [h.strip().lower() for h in re.split(r',|\s{2,}', first_line)]
         
-        # Check IoT-23
-        if "ts" in first_row_split and "uid" in first_row_split and "label" in first_row_split:
+        # Check IoT-23 / Zeek-style flow exports
+        if "ts" in first_row_split and "uid" in first_row_split and "id.orig_h" in first_row_split:
             return "configs/dataset_iot23.yaml"
+
+        # Check TON-IoT
+        if "src_ip" in first_row_split and "dst_ip" in first_row_split and "label" in first_row_split:
+            return "configs/dataset_ton_iot.yaml"
             
         # Check UNSW-NB15
         if "label" in first_row_split and "sttl" in first_row_split:
@@ -46,6 +50,8 @@ def get_config_for_dataset(filepath: Path):
 
 def main():
     archive_dir = Path("datasets")
+    venv_python = Path(".venv") / "Scripts" / "python.exe"
+    python_executable = str(venv_python if venv_python.exists() else Path(sys.executable))
     
     # Discover and filter CSV files
     csv_files = sorted(list(archive_dir.glob("*.csv")), key=lambda x: x.name)
@@ -90,12 +96,12 @@ def main():
         print(f"File Size: {size_mb:.2f} MB | Limit Applied: {limit}")
         print(f"Detected Config: {config_path}")
         print("="*60)
-        
+
         cmd = [
-            "./.venv/bin/python", "-m", "hdlnn.pipeline",
+            python_executable, "-m", "hdlnn.pipeline",
             "--mode", "train",
             "--config-dataset", config_path,
-            "--file-pattern", str(f.name),
+            "--source-file", str(f),
             "--run-id", run_id
         ]
         if limit:

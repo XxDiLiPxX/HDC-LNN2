@@ -83,4 +83,4 @@ sublabel_column: "category"
 pipeline:
   frozen_baseline_path: frozen_baseline_botnet.pt
 divergence:
-  mode: "hdc_cosine"
+  mode: "cosine"

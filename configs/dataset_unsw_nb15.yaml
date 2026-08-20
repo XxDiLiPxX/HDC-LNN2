@@ -105,5 +105,5 @@ sublabel_column: "attack_cat"
 pipeline:
   frozen_baseline_path: frozen_baseline_nb15.pt
 divergence:
-  mode: "hdc_cosine"
+  mode: "mahalanobis"
 

@@ -52,4 +52,4 @@ sublabel_column: "detailed-label"
 pipeline:
   frozen_baseline_path: frozen_baseline_iot23.pt
 divergence:
-  mode: "hdc_cosine"
+  mode: "cosine"
