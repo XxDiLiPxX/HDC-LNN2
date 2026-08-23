@@ -25,20 +25,22 @@ An end-to-end framework and empirical benchmark comparing **Continuous-Time Clos
 ## 🧠 Architecture Overview
 
 ```
-                          ┌────────────────────────┐
-Raw Network Flow         │   HDC RecordEncoder    │  10,000-D Bipolar Vector
-Telemetry (CSV / Zeek) ──>│ (Continuous Codebooks  │───────────────────────────┐
-                          │  + Item Memory Binding)│                           │
-                          └────────────────────────┘                           │
-                                                                               ▼
-┌────────────────────────┐    ┌───────────────────────────────────┐    ┌───────────────┐
-│ One-Class Reference    │    │ Continuous-Time Closed-Form (CfC) │    │ Anomaly Score │
-│ Normal Manifold Scorer │<───│      Liquid Neural Network        │<───│ $\mathbf{x}_t$│
-│ (Mahalanobis Distance) │    │  (Adaptive Hidden States $h_t$)   │    │  $\Delta t_t$ │
-└───────────┬────────────┘    └───────────────────────────────────┘    └───────────────┘
-            │
-            ▼
-    Alert Decision: [Normal (0) / Attack (1)] + SIEM / SOAR Webhook
+                               ┌───────────────────────────────────┐
+Raw Network Flow Stream ──────>│   HDC RecordEncoder (D=10,000)    │───┐
+(CSV / Live Telemetry)         │ Continuous Codebooks + Item Memory│   │ 10,000-D Bipolar Vector (x_t)
+                               └───────────────────────────────────┘   │ + Inter-Arrival Time (Δt)
+                                                                       ▼
+┌───────────────────────────────────┐    ┌───────────────────────────────────┐
+│   One-Class Reference Manifold    │<───│ Continuous-Time Closed-Form (CfC) │
+│ (Ledoit-Wolf Mahalanobis Distance)│    │       Liquid Neural Network       │
+└─────────────────┬─────────────────┘    │    (Adaptive Hidden State h_t)    │
+                  │                      └───────────────────────────────────┘
+                  │ Anomaly Divergence Score
+                  ▼
+┌───────────────────────────────────┐
+│      Decision & SIEM Alerting     │
+│ [Normal (0) / Threat Attack (1)]  │
+└───────────────────────────────────┘
 ```
 
 - **HDC Encoder ($D=10,000$)**: Maps continuous numeric metrics into orthogonal level hypervectors and binds categorical fields via associative item memory.
