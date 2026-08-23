@@ -1,0 +1,61 @@
+================================================================================
+REPORT: LATENT SEPARABILITY & VALIDATION THRESHOLD CALIBRATION ANALYSIS
+================================================================================
+Timestamp: 2026-08-20
+Status: COMPLETE — EMPIRICAL THRESHOLD CALIBRATION BENCHMARK & SEPARABILITY AUDIT
+
+--------------------------------------------------------------------------------
+1. OBJECTIVE & BACKGROUND
+--------------------------------------------------------------------------------
+This phase investigated score distribution separability and decision thresholding
+strategies for continuous-time HDC-LNN anomaly detection across UNSW-NB15 (30,000 flows)
+and NSL-KDD (22,544 flows).
+
+Initial baseline configurations evaluated Mahalanobis distance thresholds using a
+heuristic formula:
+    threshold = mean(D_normal) + k * std(D_normal) (k=3.0)
+
+While precision under this heuristic was exceptionally high (97.9% on UNSW, 92.5% on KDD),
+it caused severe under-detection of subtle or stealthy attacks (recall: ~51.7% on UNSW,
+~53.3% on KDD), resulting in an overall F1-score capped at ~0.677.
+
+--------------------------------------------------------------------------------
+2. METHODOLOGY & CALIBRATION MECHANISM
+--------------------------------------------------------------------------------
+To resolve this without modifying model weights or violating leakage isolation:
+1. Leakage Isolation: The ReferenceManifold continues to fit exclusively on normal
+   validation states (label=0) to establish the true normal baseline distribution.
+2. Validation Threshold Calibration: Using validation trajectories (both normal and
+   attacks), candidate decision thresholds are evaluated across 1,000 empirical quantile
+   steps to determine the operating point that maximizes the validation F1-score:
+       threshold* = argmax_{th} F1(y_val, D_val > th)
+3. Test Set Application: The calibrated threshold* is frozen and applied unconditionally
+   to the entity-disjoint test split.
+
+--------------------------------------------------------------------------------
+3. EMPIRICAL RESULTS & GAINS
+--------------------------------------------------------------------------------
+
+### UNSW-NB15 Benchmark (30,000 flows, N_test = 4,613 flows):
+- Baseline (k=3.0*std): F1 = 0.6771 | Precision = 0.9792 | Recall = 0.5174 | FN = 1,716
+- Calibrated (F1-Max):  F1 = 0.8719 | Precision = 0.8963 | Recall = 0.8487 | FN = 538
+- Performance Delta:    +0.1948 F1 (+28.8%) | -1,178 Missed Attacks (-68.6%)
+
+### NSL-KDD Benchmark (22,544 flows, N_test = 3,466 flows):
+- Baseline (k=3.0*std): F1 = 0.6761 | Precision = 0.9249 | Recall = 0.5327 | FN = 800
+- Calibrated (F1-Max):  F1 = 0.8089 | Precision = 0.8183 | Recall = 0.7996 | FN = 343
+- Performance Delta:    +0.1328 F1 (+19.6%) | -457 Missed Attacks (-57.1%)
+
+--------------------------------------------------------------------------------
+4. SEPARABILITY CEILING FINDINGS
+--------------------------------------------------------------------------------
+Analysis of the latent state space (hidden_dim=64) indicates an intrinsic overlap
+of ~44-47% between benign flow manifolds and stealthy attacks (e.g. low-and-slow DNS,
+reconnaissance), explaining why FPR@95%TPR remains ~82% on UNSW and ~94% on KDD regardless
+of covariance estimation technique.
+
+Future work directions:
+1. Increase liquid hidden state capacity (d=128/256)
+2. Multi-scale continuous HDC encoding (RFF/SAX)
+3. Extended sequence context horizons (>16 steps)
+================================================================================
