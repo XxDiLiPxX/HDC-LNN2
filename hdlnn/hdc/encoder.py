@@ -15,11 +15,13 @@ class RecordEncoder(IEncoder):
         self, 
         D: int = 10000, 
         categorical_columns: List[str] = None, 
-        numerical_columns: List[str] = None
+        numerical_columns: List[str] = None,
+        use_log_transform: bool = False
     ):
         self.D = D
         self.categorical_columns = categorical_columns or []
         self.numerical_columns = numerical_columns or []
+        self.use_log_transform = use_log_transform
         
         self.codebooks = CodebookManager(D=D)
         self.item_memory = ItemMemory(D=D)
@@ -27,7 +29,7 @@ class RecordEncoder(IEncoder):
     def fit(self, train_flows: List[CanonicalFlow]) -> None:
         """Fits numerical ranges and builds item memory vocabulary from training data only."""
         # 1. Fit numerical min-max scales
-        self.codebooks.fit_numerical_ranges(train_flows, self.numerical_columns)
+        self.codebooks.fit_numerical_ranges(train_flows, self.numerical_columns, use_log_transform=self.use_log_transform)
         
         # 2. Build item memory from training categoricals
         self.item_memory.unlock()
@@ -66,12 +68,15 @@ class RecordEncoder(IEncoder):
             summed.addcmul_(val_tensor, key_vector.unsqueeze(0))
 
         # 2. Process numerical fields (fully vectorized lookup via level index mapping)
+        use_log = getattr(self.codebooks, "use_log_transform", False)
         for col in self.numerical_columns:
             key_vector = self.codebooks.get_key_vector(col)
             
             # Gather all values for the batch
             raw_vals = [flow.numerical_fields.get(col, 0.0) for flow in flows]
             vals_tensor = torch.tensor(raw_vals, dtype=torch.float32)
+            if use_log:
+                vals_tensor = torch.log1p(torch.clamp(vals_tensor, min=0.0))
             
             # Normalize based on training range
             min_val, max_val = self.codebooks.min_max.get(col, (0.0, 1.0))
@@ -97,3 +102,50 @@ class RecordEncoder(IEncoder):
             EncodedHypervector(vector=bipolar_vectors[i], is_oov=any_oov[i])
             for i in range(num_flows)
         ]
+
+    def encode_tensor(self, flows: List[CanonicalFlow]) -> torch.Tensor:
+        """Vectorized direct encoding of a batch of CanonicalFlow events returning a single dense Tensor."""
+        num_flows = len(flows)
+        if num_flows == 0:
+            return torch.zeros((0, self.D), dtype=torch.float32)
+
+        import numpy as np
+        summed = torch.zeros((num_flows, self.D), dtype=torch.float32)
+        use_log = getattr(self.codebooks, "use_log_transform", False)
+
+        for col in self.categorical_columns:
+            key_vector = self.codebooks.get_key_vector(col)
+            col_vals = [flow.categorical_fields.get(col, "-") for flow in flows]
+            val_tensor, _ = self.item_memory.get_batch_vectors(col, col_vals)
+            summed.addcmul_(val_tensor, key_vector.unsqueeze(0))
+
+        num_cols = self.numerical_columns
+        if num_cols:
+            mins = np.array([self.codebooks.min_max.get(col, (0.0, 1.0))[0] for col in num_cols], dtype=np.float32)
+            maxs = np.array([self.codebooks.min_max.get(col, (0.0, 1.0))[1] for col in num_cols], dtype=np.float32)
+            diffs = maxs - mins
+            is_zero_diff = (diffs == 0)
+            diffs[is_zero_diff] = 1.0
+
+            num_matrix = np.empty((num_flows, len(num_cols)), dtype=np.float32)
+            for j, col in enumerate(num_cols):
+                num_matrix[:, j] = [flow.numerical_fields.get(col, 0.0) for flow in flows]
+
+            if use_log:
+                np.maximum(num_matrix, 0.0, out=num_matrix)
+                np.log1p(num_matrix, out=num_matrix)
+
+            norm_matrix = (num_matrix - mins) / diffs
+            norm_matrix[:, is_zero_diff] = 0.0
+            np.clip(norm_matrix, 0.0, 1.0, out=norm_matrix)
+            idx_matrix = np.round(norm_matrix * (self.codebooks.num_levels - 1)).astype(np.int64)
+            idx_torch = torch.from_numpy(idx_matrix)
+
+            for j, col in enumerate(num_cols):
+                key_vector = self.codebooks.get_key_vector(col)
+                val_tensor = self.codebooks.level_vectors[idx_torch[:, j]]
+                summed.addcmul_(val_tensor, key_vector.unsqueeze(0))
+
+        bipolar_vectors = torch.sign(summed)
+        bipolar_vectors[bipolar_vectors == 0] = 1.0
+        return bipolar_vectors.to(torch.int8)

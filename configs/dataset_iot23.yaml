@@ -1,6 +1,7 @@
 dataset_name: "iot23"
 cache_dir: "datasets"
 entity_id_modulo: 254
+use_log_transform: true
 
 download_urls:
   kaggle_dataset: "surajsooraj26/iot-23"
@@ -46,10 +47,13 @@ numerical_columns:
   - resp_pkts
   - resp_ip_bytes
 
+entity_id_column: "id.orig_h"
+
 label_column: "label"
 sublabel_column: "detailed-label"
 
 pipeline:
   frozen_baseline_path: frozen_baseline_iot23.pt
 divergence:
-  mode: "cosine"
+  mode: "mahalanobis"
+

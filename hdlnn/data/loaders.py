@@ -47,12 +47,46 @@ def _load_csv_as_flows(
     limit: Optional[int] = None,
     entity_id_modulo: int = 254,
     stride: int = 1,
+    schema_columns: Optional[List[str]] = None,
 ) -> List[CanonicalFlow]:
     flows: List[CanonicalFlow] = []
     global_time = 0.0
 
     with open(csv_path, "r", newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
+        # Some benchmark sources (notably NSL-KDD) have no header row. Use
+        # their declared configuration schema only when the first row clearly
+        # is not a header, so no traffic record is discarded or shifted.
+        first_row = next(csv.reader(f), None)
+        if first_row is None:
+            return flows
+        expected_names = set(categorical_columns + numerical_columns + [label_column])
+        has_header = bool(expected_names.intersection(cell.strip() for cell in first_row))
+        f.seek(0)
+        
+        # Check if the header has trailing whitespace-delimited columns (IoT-23 Zeek log format)
+        first_line = first_row[0] if len(first_row) == 1 else ",".join(first_row)
+        import re
+        if ("tunnel_parents" in first_line or "label" in first_line) and ("\t" in first_line or "   " in first_line or "  " in first_line):
+            # Custom hybrid line generator for IoT-23
+            def _iot23_line_gen(file_obj):
+                for line_str in file_obj:
+                    line_str = line_str.strip()
+                    if not line_str or line_str.startswith("#"):
+                        continue
+                    parts = line_str.split(",", 20)
+                    if len(parts) == 21:
+                        tail_parts = re.split(r"\s+", parts[20].strip())
+                        yield parts[:20] + tail_parts
+                    else:
+                        yield [p.strip() for p in line_str.split(",")]
+            
+            raw_gen = _iot23_line_gen(f)
+            header_row = next(raw_gen, None)
+            if not header_row:
+                return flows
+            reader = (dict(zip(header_row, r)) for r in raw_gen)
+        else:
+            reader = csv.DictReader(f, fieldnames=schema_columns) if not has_header and schema_columns else csv.DictReader(f)
         for row_idx, row in enumerate(reader):
             if not row:
                 continue
@@ -115,4 +149,5 @@ def load_dataset_flows(config: Any, data_dir: Path, source_file: str, limit: Opt
         limit=limit,
         entity_id_modulo=config.data.get("entity_id_modulo", 254),
         stride=stride,
+        schema_columns=list(config.get("columns", [])),
     )

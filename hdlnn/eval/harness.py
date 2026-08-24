@@ -1,7 +1,9 @@
 import time
 import json
+import hashlib
 import yaml
 import logging
+import gc
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -13,6 +15,7 @@ from hdlnn.data.splitter import split_dataset
 from hdlnn.data.quality import verify_split_quality
 from hdlnn.eval.injector import inject_threat_scenarios
 from hdlnn.eval.metrics import compute_metrics_suite
+from hdlnn.eval.calibration import calibrate_threshold
 from hdlnn.hdc.encoder import RecordEncoder
 from hdlnn.lnn.model import LNNSequenceModel
 from hdlnn.baselines.lstm import LSTMBaseline
@@ -195,18 +198,24 @@ def run_experiment(
         test_inputs = mapper.transform(test_flows)
     else:
         # Fit HDC Encoder
+        use_log = bool(config.get("use_log_transform", False))
         encoder = RecordEncoder(
             D=D,
             categorical_columns=config.categorical_columns,
-            numerical_columns=config.numerical_columns
+            numerical_columns=config.numerical_columns,
+            use_log_transform=use_log
         )
         encoder.fit(train_flows)
         input_dim = D
         
-        # Batch encode
-        train_inputs = torch.stack([ev.vector for ev in encoder.encode_batch(train_flows)])
-        val_inputs = torch.stack([ev.vector for ev in encoder.encode_batch(val_flows)])
-        test_inputs = torch.stack([ev.vector for ev in encoder.encode_batch(test_flows)])
+        # Batch direct tensor encode (memory efficient)
+        train_inputs = encoder.encode_tensor(train_flows)
+        
+        logger.info("Encoding validation flows...")
+        val_inputs = encoder.encode_tensor(val_flows)
+        
+        logger.info("Encoding test flows...")
+        test_inputs = encoder.encode_tensor(test_flows)
 
     # 6. Initialize baseline model
     hidden_dim = config.model.get("hidden_dim", 64)
@@ -217,7 +226,6 @@ def run_experiment(
     elif baseline_name == "lstm":
         model = LSTMBaseline(input_dim=input_dim, hidden_dim=hidden_dim, proj_dim=input_dim)
     elif baseline_name == "cnn":
-        # CNN state size includes the input history
         model = CNN1DBaseline(input_dim=input_dim, hidden_dim=hidden_dim, kernel_size=3, proj_dim=input_dim)
     elif baseline_name == "autoencoder":
         model = AETemporalModel(input_dim=input_dim, hidden_dim=hidden_dim)
@@ -232,26 +240,51 @@ def run_experiment(
     # 7. Training loop (skipped for HDC-only baseline)
     if model is not None:
         logger.info("Preparing sequence batches for training...")
-        # Prepare training sequences
-        if baseline_name == "autoencoder":
-            train_normal_indices = [i for i, f in enumerate(train_flows) if f.label == 0]
-            if len(train_normal_indices) > 0:
-                train_ae_flows = [train_flows[i] for i in train_normal_indices]
-                train_ae_inputs = train_inputs[train_normal_indices]
-                xs, ys, dts = prepare_sequences(train_ae_flows, train_ae_inputs, seq_len=16)
-            else:
-                xs, ys, dts = prepare_sequences(train_flows, train_inputs, seq_len=16)
-        else:
-            xs, ys, dts = prepare_sequences(train_flows, train_inputs, seq_len=16)
+        seq_len = config.model.get("sequence_length", 16)
         
-        if len(xs) > 0:
-            logger.info(f"Training model ({len(xs)} sequences)...")
+        # Build sequence indices directly into train_inputs to avoid 3 GB of redundant tensor duplication
+        entity_groups = {}
+        for idx, f in enumerate(train_flows):
+            if baseline_name == "autoencoder" and f.label != 0:
+                continue
+            entity_groups.setdefault(f.entity_id, []).append((idx, f.dt))
+            
+        seq_indices = []
+        for eid, seq in entity_groups.items():
+            if len(seq) < 2:
+                continue
+            stride = seq_len // 2 or 1
+            for i in range(0, len(seq) - seq_len, stride):
+                chunk = seq[i : i + seq_len + 1]
+                if len(chunk) == seq_len + 1:
+                    x_idxs = [item[0] for item in chunk[:-1]]
+                    y_idxs = [item[0] for item in chunk[1:]]
+                    dts = [item[1] for item in chunk[:-1]]
+                    seq_indices.append((x_idxs, y_idxs, dts))
+        
+        if not seq_indices:
+            # Fallback for short entities
+            for fallback_len in (8, 4, 2):
+                for eid, seq in entity_groups.items():
+                    if len(seq) > fallback_len:
+                        for i in range(0, len(seq) - fallback_len, fallback_len // 2 or 1):
+                            chunk = seq[i : i + fallback_len + 1]
+                            if len(chunk) == fallback_len + 1:
+                                x_idxs = [item[0] for item in chunk[:-1]]
+                                y_idxs = [item[0] for item in chunk[1:]]
+                                dts = [item[1] for item in chunk[:-1]]
+                                seq_indices.append((x_idxs, y_idxs, dts))
+                if seq_indices:
+                    break
+
+        if len(seq_indices) > 0:
+            logger.info(f"Training model ({len(seq_indices)} sequences)...")
             lr = 0.005 if baseline_name == "autoencoder" else config.model.get("lr", 0.001)
             epochs = 15 if baseline_name == "autoencoder" else config.model.get("epochs", 5)
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+            optimizer = torch.optim.Adam(
+                model.parameters(), lr=lr, weight_decay=config.model.get("weight_decay", 0.0)
+            )
             criterion = nn.MSELoss()
-            
-            epochs = config.model.get("epochs", 5)
             batch_size = config.model.get("batch_size", 64)
             
             model.train()
@@ -259,31 +292,26 @@ def run_experiment(
                 epoch_loss = 0.0
                 num_batches = 0
                 
-                # Simple batching loop
-                for b in range(0, len(xs), batch_size):
-                    xb = xs[b : b + batch_size]
-                    yb = ys[b : b + batch_size]
-                    dtb = dts[b : b + batch_size]
+                for b in range(0, len(seq_indices), batch_size):
+                    batch_items = seq_indices[b : b + batch_size]
+                    xb = torch.stack([train_inputs[item[0]] for item in batch_items]).to(torch.float32)
+                    yb = torch.stack([train_inputs[item[1]] for item in batch_items]).to(torch.float32)
+                    dtb = torch.tensor([item[2] for item in batch_items], dtype=torch.float32)
                     
                     optimizer.zero_grad()
                     if baseline_name == "autoencoder":
-                        # Autoencoder reconstruction loss on input sequences
                         recon_seq, _ = model.forward(xb)
                         loss = criterion(recon_seq, xb)
                     else:
-                        # Forward pass
                         if isinstance(model, LNNSequenceModel):
                             out_seq, _ = model.forward(xb, dt=dtb)
                         else:
                             out_seq, _ = model.forward(xb)
-                            
-                        # Project next-vector prediction
                         pred_seq = model.predict_next_vector(out_seq)
                         loss = criterion(pred_seq, yb)
                     
                     loss.backward()
                     optimizer.step()
-                    
                     epoch_loss += loss.item()
                     num_batches += 1
                 
@@ -291,6 +319,10 @@ def run_experiment(
                 logger.info(f"Epoch {epoch+1}/{epochs} - Avg Loss: {avg_loss:.6f}")
         else:
             logger.warning("No sequences prepared for training (dataset too small).")
+            
+        del seq_indices
+        del train_inputs
+        gc.collect()
 
     # 8. Fit Scorer parameters using validation normal states
     logger.info("Computing validation hidden states for normal traffic...")
@@ -333,23 +365,23 @@ def run_experiment(
                     state_dim = 2 * hidden_dim * 16
                 else:
                     state_dim = hidden_dim
-                entity_states[eid] = torch.zeros(state_dim)
+                entity_states[eid] = torch.zeros(1, state_dim)
                 
             h_prev = entity_states[eid]
-            x_val = val_inputs[idx]
-            dt_val = torch.tensor([flow.dt])
+            x_val = val_inputs[idx].to(torch.float32).unsqueeze(0)
+            dt_val = torch.tensor([[flow.dt]], dtype=torch.float32)
             
             with torch.no_grad():
-                h_next = model.step(x_val, h_prev, dt_val).squeeze(0)
+                h_next = model.step(x_val, h_prev, dt_val)
             entity_states[eid] = h_next
             
             # Extract score state slice for CNN, Mamba2, and LSTM
             if baseline_name == "cnn":
-                state_to_score = h_next[-hidden_dim:]
+                state_to_score = h_next[0, -hidden_dim:]
             elif baseline_name in ("mamba2", "lstm"):
-                state_to_score = h_next[:hidden_dim]
+                state_to_score = h_next[0, :hidden_dim]
             else:
-                state_to_score = h_next
+                state_to_score = h_next[0]
             val_states_list.append(state_to_score)
             
         # Collect validation NORMAL states only for one-class threshold calibration
@@ -362,29 +394,33 @@ def run_experiment(
             if len(train_normal_indices) > 0:
                 train_normal_states_list = []
                 entity_states_train = {}
-                for idx, flow in enumerate(train_flows):
-                    if flow.label == 0:
-                        eid = flow.entity_id
-                        h_prev = entity_states_train.get(eid, torch.zeros(state_dim))
-                        x_tr = train_inputs[idx]
-                        dt_tr = torch.tensor([flow.dt])
-                        with torch.no_grad():
-                            h_next = model.step(x_tr, h_prev, dt_tr).squeeze(0)
-                        entity_states_train[eid] = h_next
-                        if baseline_name == "cnn":
-                            st = h_next[-hidden_dim:]
-                        elif baseline_name in ("mamba2", "lstm"):
-                            st = h_next[:hidden_dim]
-                        else:
-                            st = h_next
-                        train_normal_states_list.append(st)
+                normal_train_flows = [train_flows[i] for i in train_normal_indices]
+                if is_raw_baseline:
+                    normal_train_inputs = mapper.transform(normal_train_flows)
+                else:
+                    normal_train_inputs = encoder.encode_tensor(normal_train_flows)
+                for idx, flow in enumerate(normal_train_flows):
+                    eid = flow.entity_id
+                    h_prev = entity_states_train.get(eid, torch.zeros(1, state_dim))
+                    x_tr = normal_train_inputs[idx].to(torch.float32).unsqueeze(0)
+                    dt_tr = torch.tensor([[flow.dt]], dtype=torch.float32)
+                    with torch.no_grad():
+                        h_next = model.step(x_tr, h_prev, dt_tr)
+                    entity_states_train[eid] = h_next
+                    if baseline_name == "cnn":
+                        st = h_next[0, -hidden_dim:]
+                    elif baseline_name in ("mamba2", "lstm"):
+                        st = h_next[0, :hidden_dim]
+                    else:
+                        st = h_next[0]
+                    train_normal_states_list.append(st)
                 val_normal_states = torch.stack(train_normal_states_list) if len(train_normal_states_list) > 0 else torch.stack(val_states_list)
             else:
                 val_normal_states = torch.stack(val_states_list)
     else:
         # HDC-only baseline: states are the raw hypervectors
         for idx, flow in enumerate(val_flows):
-            val_states_list.append(val_inputs[idx])
+            val_states_list.append(val_inputs[idx].to(torch.float32))
             
         val_normal_indices = [i for i, f in enumerate(val_flows) if f.label == 0]
         if len(val_normal_indices) > 0:
@@ -399,10 +435,13 @@ def run_experiment(
 
     # Perform Validation-Calibrated Anomaly Thresholding
     logger.info("Calibrating decision thresholds on validation split...")
+    validation_records: List[Dict[str, Any]] = []
     import numpy as np
     from sklearn.metrics import f1_score
     
     val_labels = np.array([f.label for f in val_flows])
+    has_both_validation_classes = np.sum(val_labels == 1) > 0 and np.sum(val_labels == 0) > 0
+    calibration_summary = {}
     
     if baseline_name == "autoencoder":
         if len(val_normal_indices) > 0:
@@ -410,22 +449,46 @@ def run_experiment(
         else:
             train_normal_indices = [i for i, f in enumerate(train_flows) if f.label == 0]
             if len(train_normal_indices) > 0:
-                val_normal_inputs = torch.stack([train_inputs[i] for i in train_normal_indices])
+                normal_train_flows = [train_flows[i] for i in train_normal_indices]
+                if is_raw_baseline:
+                    val_normal_inputs = mapper.transform(normal_train_flows)
+                else:
+                    val_normal_inputs = encoder.encode_tensor(normal_train_flows)
             else:
                 val_normal_inputs = torch.stack(val_inputs)
         scorer.fit_threshold(val_normal_inputs, val_normal_states)
+        calibration_summary = {"method": "ae_reconstruction_normal_fit", "threshold": float(scorer.reconstruction_threshold)}
         logger.info(f"Validation Calibrated AE Reconstruction Threshold on Normals: {scorer.reconstruction_threshold:.4f}")
     elif scoring_mode == "mahalanobis":
-        if baseline_name == "hdc-lnn":
-            has_positives = np.sum(val_labels == 1) > 0
-            if has_positives and len(val_states_list) > 0:
-                val_all_states = torch.stack(val_states_list)
-                scorer.fit_f1_max_threshold(val_normal_states, val_all_states, val_labels)
+        if len(val_states_list) > 0:
+            val_all_states = torch.stack(val_states_list)
+            # Fit the reference only on validation normal states, then choose a
+            # fixed threshold from validation labels. Test labels are never used.
+            scorer.manifold.fit(val_normal_states)
+            val_scores = scorer.manifold.compute_mahalanobis_distance(val_all_states).detach().cpu().numpy()
+            calibration_method = config.divergence.get("calibration_method", "f1_max")
+            
+            if calibration_method == "normal_percentile" and not has_both_validation_classes:
+                pass # it doesn't matter for now, it's just a fallback if needed
+                
+            if has_both_validation_classes:
+                threshold, calibration_summary = calibrate_threshold(
+                    val_labels, val_scores, method=calibration_method,
+                    min_precision=config.divergence.get("min_precision", 0.95),
+                    target_tpr=config.divergence.get("target_tpr", 0.95),
+                )
             else:
                 k_val = config.divergence.get("threshold_k", 3.0)
-                scorer.threshold_k = k_val
-                scorer.fit_mahalanobis_threshold(val_normal_states)
-                logger.info(f"Validation Calibrated Mahalanobis Threshold on Normals: {scorer.mahalanobis_threshold:.4f} (k={scorer.threshold_k})")
+                threshold = float(np.mean(val_scores[val_labels == 0]) + k_val * np.std(val_scores[val_labels == 0]))
+                calibration_summary = {"method": "mean_plus_k_std", "threshold": threshold}
+            
+            scorer.mahalanobis_threshold = threshold
+            logger.info("Validation threshold frozen: method=%s threshold=%.4f", calibration_method, threshold)
+            validation_records = [
+                {"entity_id": flow.entity_id, "timestamp": flow.timestamp, "actual_label": int(label),
+                 "predicted_label": int(score >= threshold), "drift_score": float(score), "threshold": float(threshold)}
+                for flow, label, score in zip(val_flows, val_labels, val_scores)
+            ]
         else:
             k_val = config.divergence.get("threshold_k", 3.0)
             scorer.threshold_k = k_val
@@ -441,7 +504,7 @@ def run_experiment(
                 state = val_states_list[idx]
                 with torch.no_grad():
                     pred_hv = model.predict_next_vector(state.unsqueeze(0)).squeeze(0)
-                sim = torch.cosine_similarity(val_inputs[idx].unsqueeze(0), pred_hv.unsqueeze(0)).item()
+                sim = torch.cosine_similarity(val_inputs[idx].to(torch.float32).unsqueeze(0), pred_hv.unsqueeze(0)).item()
                 val_norm_dists.append(1.0 - sim)
         if len(val_norm_dists) > 0:
             scorer.initial_threshold = float(np.mean(val_norm_dists) + 1.0 * np.std(val_norm_dists))
@@ -461,7 +524,7 @@ def run_experiment(
                 scorer.ewma_stats = {}
                 preds = []
                 for idx, (flow, state) in enumerate(zip(val_flows, val_states_list)):
-                    scorer.register_observed(flow.entity_id, val_inputs[idx])
+                    scorer.register_observed(flow.entity_id, val_inputs[idx].to(torch.float32))
                     scorer.threshold_k = k
                     
                     traj = TrajectoryState(flow.entity_id, flow.timestamp, state)
@@ -477,71 +540,96 @@ def run_experiment(
         scorer.ewma_stats = {}  # Reset EWMA stats for clean test evaluation
         logger.info(f"Validation Calibrated Cosine EWMA multiplier k: {scorer.threshold_k:.2f} (Validation F1: {max(best_f1, 0.0):.4f})")
 
+    # Release temporary training / validation structures to reduce Peak RSS
+    del val_states_list
+    gc.collect()
+
     # 9. Evaluate Test Split Step-by-Step
     logger.info("Evaluating test split step-by-step...")
-    test_labels = []
-    test_scores = []
-    test_preds = []
-    
-    # Store decision records
-    records_list = []
+    num_test = len(test_flows)
+    test_labels = [flow.label for flow in test_flows]
+    test_scores = np.empty(num_test, dtype=np.float32)
+    test_preds = np.empty(num_test, dtype=np.int32)
     
     test_entity_states: Dict[str, torch.Tensor] = {}
+    is_mahal = (scoring_mode == "mahalanobis" and baseline_name != "autoencoder")
+    
+    if is_mahal:
+        inv_cov_fast = scorer.manifold.inv_cov
+        mean_fast = scorer.manifold.mean
+        th_fast = scorer.mahalanobis_threshold
+        high_dim = (scorer.manifold.hidden_dim > 1000)
+
     start_eval = time.perf_counter()
     
-    for idx, flow in enumerate(test_flows):
-        x_test = test_inputs[idx]
-        dt_test = torch.tensor([flow.dt])
-        eid = flow.entity_id
-        
-        if model is not None:
-            if eid not in test_entity_states:
-                if baseline_name == "cnn":
-                    state_dim = 2 * input_dim + hidden_dim
-                elif baseline_name in ("autoencoder", "lstm"):
-                    state_dim = 2 * hidden_dim
-                elif baseline_name == "mamba2":
-                    state_dim = 2 * hidden_dim * 16
-                else:
-                    state_dim = hidden_dim
-                test_entity_states[eid] = torch.zeros(state_dim)
-                
-            h_prev = test_entity_states[eid]
-            with torch.no_grad():
-                h_next = model.step(x_test, h_prev, dt_test).squeeze(0)
-            test_entity_states[eid] = h_next
-            if baseline_name == "cnn":
-                state_to_score = h_next[-hidden_dim:]
-            elif baseline_name in ("mamba2", "lstm"):
-                state_to_score = h_next[:hidden_dim]
-            else:
-                state_to_score = h_next
-        else:
-            # HDC-only: the "state" is the raw hypervector itself
-            state_to_score = x_test
+    dt_test = torch.zeros((1, 1), dtype=torch.float32)
+    
+    with torch.inference_mode():
+        for idx, flow in enumerate(test_flows):
+            x_test = test_inputs[idx].to(torch.float32)
+            dt_test[0, 0] = flow.dt
+            eid = flow.entity_id
             
-        # Register observation for Cosine scorer
-        scorer.register_observed(eid, x_test)
-        
-        # Score anomaly
-        traj = TrajectoryState(eid, flow.timestamp, state_to_score)
-        decision = scorer.score(traj)
-        
-        test_labels.append(flow.label)
-        test_scores.append(decision.drift_score)
-        test_preds.append(1 if decision.is_anomaly else 0)
-        
-        records_list.append({
-            "entity_id": eid,
-            "timestamp": flow.timestamp,
-            "actual_label": flow.label,
-            "predicted_label": 1 if decision.is_anomaly else 0,
-            "drift_score": decision.drift_score,
-            "threshold": decision.threshold
-        })
-        
+            if model is not None:
+                if eid not in test_entity_states:
+                    if baseline_name == "cnn":
+                        state_dim = 2 * input_dim + hidden_dim
+                    elif baseline_name in ("autoencoder", "lstm"):
+                        state_dim = 2 * hidden_dim
+                    elif baseline_name == "mamba2":
+                        state_dim = 2 * hidden_dim * 16
+                    else:
+                        state_dim = hidden_dim
+                    test_entity_states[eid] = torch.zeros(1, state_dim)
+                    
+                h_prev = test_entity_states[eid]
+                h_next = model.step(x_test.unsqueeze(0), h_prev, dt_test)
+                test_entity_states[eid] = h_next
+                if baseline_name == "cnn":
+                    state_to_score = h_next[0, -hidden_dim:]
+                elif baseline_name in ("mamba2", "lstm"):
+                    state_to_score = h_next[0, :hidden_dim]
+                else:
+                    state_to_score = h_next[0]
+            else:
+                # HDC-only: the "state" is the raw hypervector itself
+                state_to_score = x_test
+                
+            if is_mahal:
+                if high_dim:
+                    sim = torch.cosine_similarity(state_to_score.unsqueeze(0), mean_fast.unsqueeze(0), dim=-1)
+                    dist_val = float(torch.clamp(1.0 - sim, min=0.0).item())
+                else:
+                    diff = state_to_score - mean_fast
+                    sq_dist = torch.clamp((diff @ inv_cov_fast) @ diff, min=0.0)
+                    dist_val = float(torch.sqrt(sq_dist).item())
+                test_scores[idx] = dist_val
+                test_preds[idx] = 1 if dist_val >= th_fast else 0
+            else:
+                scorer.register_observed(eid, x_test)
+                traj = TrajectoryState(eid, flow.timestamp, state_to_score)
+                decision = scorer.score(traj)
+                test_scores[idx] = decision.drift_score
+                test_preds[idx] = 1 if decision.is_anomaly else 0
+            
     eval_duration = time.perf_counter() - start_eval
     logger.info(f"Test evaluation completed in {eval_duration:.4f} seconds.")
+
+    test_scores = test_scores.tolist()
+    test_preds = test_preds.tolist()
+
+    # Build concise records for logging
+    records_list = [
+        {
+            "entity_id": test_flows[i].entity_id,
+            "timestamp": test_flows[i].timestamp,
+            "actual_label": test_labels[i],
+            "predicted_label": test_preds[i],
+            "drift_score": test_scores[i],
+            "threshold": float(getattr(scorer, "mahalanobis_threshold", getattr(scorer, "threshold", 0.0)))
+        }
+        for i in range(min(num_test, 1000))
+    ]
 
     # 10. Compute full metrics suite
     metrics = compute_metrics_suite(
@@ -551,10 +639,28 @@ def run_experiment(
         latency_seconds=eval_duration,
         num_samples=len(test_flows)
     )
+    if scoring_mode == "mahalanobis" and has_both_validation_classes:
+        metrics["calibration"] = calibration_summary
+    elif scoring_mode == "mahalanobis":
+        metrics["calibration"] = {"method": "normal_mean_plus_k_std", "threshold": getattr(scorer, "mahalanobis_threshold", 0.0)}
+    elif baseline_name == "autoencoder":
+        metrics["calibration"] = calibration_summary
+    else:
+        metrics["calibration"] = {"method": "default", "threshold": getattr(scorer, "threshold", 0.0)}
+    metrics["experiment"] = {
+        "dataset": config.data.get("dataset_name", "unknown"), "model": baseline_name,
+        "random_seed": config.seed, "hdc_dimension": D,
+        "sequence_length": config.model.get("sequence_length", 16),
+        "training_epochs": config.model.get("epochs", 5),
+        "learning_rate": config.model.get("lr", 0.001),
+        "config_hash": hashlib.sha256(json.dumps(config.to_dict(), sort_keys=True).encode()).hexdigest()[:16],
+    }
     logger.info(f"Experiment {run_id} classification F1-Score = {metrics['f1_score']:.4f}")
 
     # 11. Write self-contained run folder
     run_dir = output_dir / run_id
+    if run_dir.exists() and any(run_dir.iterdir()):
+        raise FileExistsError(f"Refusing to overwrite existing experiment artifacts: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
     
     # Save config
@@ -574,6 +680,8 @@ def run_experiment(
     except Exception:
         pass
     df_decisions.to_csv(decisions_csv, index=False)
+    if validation_records:
+        pd.DataFrame(validation_records).to_csv(run_dir / "validation_decisions.csv", index=False)
     
     logger.info(f"Run artifacts successfully committed to {run_dir}")
     

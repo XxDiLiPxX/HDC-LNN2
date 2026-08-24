@@ -1,4 +1,5 @@
 dataset_name: "kdd"
+use_log_transform: true
 cache_dir: "datasets"
 entity_id_modulo: 254
 
@@ -103,3 +104,4 @@ pipeline:
 divergence:
   mode: "mahalanobis"
   threshold_k: 1.0
+  calibration_method: "f1_max"

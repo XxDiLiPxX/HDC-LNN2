@@ -9,6 +9,8 @@ model:
   lr: 0.001
   epochs: 2
   batch_size: 256
+  sequence_length: 16
+  weight_decay: 0.0
 
 data:
   dataset_name: "unsw_nb15"
@@ -18,3 +20,7 @@ data:
 divergence:
   mode: "mahalanobis"
   threshold_k: 3.0
+  # Scores are distances: higher score means more anomalous.
+  calibration_method: "f1_max"
+  min_precision: 0.95
+  target_tpr: 0.95

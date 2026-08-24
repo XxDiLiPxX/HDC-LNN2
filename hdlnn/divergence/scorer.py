@@ -72,20 +72,11 @@ class DivergenceScorer(IDivergenceScorer):
         # Score validation states
         val_dists = self.manifold.compute_mahalanobis_distance(val_states).detach().cpu().numpy()
 
-        from sklearn.metrics import f1_score
-        
-        candidates = np.linspace(float(np.min(val_dists)), float(np.max(val_dists)), 1000)
-        best_f1 = -1.0
-        best_th = float(candidates[0])
-        for th in candidates:
-            preds = (val_dists > th).astype(int)
-            f1 = f1_score(val_labels, preds, zero_division=0)
-            if f1 > best_f1:
-                best_f1 = float(f1)
-                best_th = float(th)
-                
+        from hdlnn.eval.calibration import calibrate_threshold
+        best_th, summary = calibrate_threshold(val_labels, val_dists, method="f1_max")
         self.mahalanobis_threshold = best_th
-        logger.info(f"Validation F1-Max Mahalanobis threshold calibrated: threshold={best_th:.4f}, val_f1={best_f1:.4f}")
+        logger.info("Validation F1-Max Mahalanobis threshold calibrated: threshold=%.4f, val_f1=%.4f",
+                    best_th, summary["selected"]["f1"])
         return best_th
 
     def score(self, state: TrajectoryState) -> AnomalyDecision:
@@ -103,7 +94,7 @@ class DivergenceScorer(IDivergenceScorer):
         dist_tensor = self.manifold.compute_mahalanobis_distance(state.state)
         drift_score = float(dist_tensor.item())
         
-        is_anomaly = drift_score > self.mahalanobis_threshold
+        is_anomaly = drift_score >= self.mahalanobis_threshold
         
         return AnomalyDecision(
             drift_score=drift_score,

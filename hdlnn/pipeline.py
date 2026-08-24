@@ -7,7 +7,7 @@ from hdlnn.common.seeding import set_seed
 from hdlnn.common.logging import setup_logging
 from hdlnn.eval.harness import run_experiment
 from hdlnn.report.tables import print_and_save_comparison_table
-from hdlnn.report.plots import save_roc_plot
+from hdlnn.report.plots import save_roc_plot, save_diagnostic_plots
 
 logger = logging.getLogger("pipeline")
 
@@ -98,6 +98,8 @@ def main():
                 )
                 # Plot ROC curve for this baseline
                 save_roc_plot(runs_dir / run_id)
+                save_diagnostic_plots(runs_dir / run_id)
+                save_diagnostic_plots(runs_dir / run_id, "validation_decisions.csv", "validation_score_diagnostics.png")
             except Exception as e:
                 logger.error(f"Failed to execute experiment for baseline '{baseline}': {e}", exc_info=True)
                 
@@ -118,6 +120,8 @@ def main():
                 source_file=args.source_file
             )
             save_roc_plot(runs_dir / run_id)
+            save_diagnostic_plots(runs_dir / run_id)
+            save_diagnostic_plots(runs_dir / run_id, "validation_decisions.csv", "validation_score_diagnostics.png")
             # Re-generate summary table to include this new single run
             print_and_save_comparison_table(runs_dir=runs_dir)
         except Exception as e:
@@ -133,6 +137,8 @@ def main():
         for run_path in runs_dir.iterdir():
             if run_path.is_dir() and (run_path / "decisions.parquet").exists():
                 save_roc_plot(run_path)
+                save_diagnostic_plots(run_path)
+                save_diagnostic_plots(run_path, "validation_decisions.csv", "validation_score_diagnostics.png")
                 
     elif args.mode == "stream":
         from hdlnn.deploy.sidecar import run_streaming_sidecar_demo

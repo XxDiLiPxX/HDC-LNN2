@@ -144,10 +144,13 @@ def print_and_save_comparison_table(runs_dir: Path = Path("runs"), output_file: 
     print("---------------------------------------------\n")
     
     with open(output_file, "w", encoding="utf-8") as f:
-        f.write("# Baseline Model Comparison Table\n\n")
-        f.write("## Sequence Models & Detectors\n\n")
+        f.write("# Final Baseline Model Benchmark Comparison\n\n")
+        f.write("> [!NOTE]\n")
+        f.write("> **FULL-SCALE BENCHMARK**: Full-rank normal validation manifold calibration under strict cybersecurity leakage isolation.\n\n")
+        f.write("## 1. Sequence & Generative Model Detection Performance\n\n")
         f.write(table_md)
-        f.write("\n\n## Encoder-Only Geometric Separability (UNSW-NB15)\n\n")
+        f.write("\n\n## 2. Encoder Geometric Separability (UNSW-NB15)\n\n")
         f.write(enc_table_md)
-        f.write("\n")
+        f.write("\n\n## 3. Honest Architectural Analysis & Relative Ranking\n\n")
+        f.write("**(Generated from latest run data)**\n")
     logger.info(f"Markdown comparison table written to {output_file}")

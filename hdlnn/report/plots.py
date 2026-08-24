@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import logging
 from pathlib import Path
+from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,41 @@ def compute_roc_coordinates(labels: np.ndarray, scores: np.ndarray) -> Tuple[np.
     
     return fpr, tpr
 
-# Place typing import inside file
-from typing import Tuple
+def save_diagnostic_plots(run_dir: Path, decisions_filename: str = "decisions.csv",
+                          output_filename: str = "score_diagnostics.png") -> None:
+    """Save validation/test-score diagnostics without recomputing reported metrics."""
+    decisions_csv = run_dir / decisions_filename
+    if not decisions_csv.exists():
+        return
+    try:
+        import matplotlib.pyplot as plt
+        from sklearn.metrics import precision_recall_curve, roc_curve
+        df = pd.read_csv(decisions_csv)
+        labels = df["actual_label"].to_numpy()
+        scores = df["drift_score"].to_numpy()
+        if not (np.any(labels == 0) and np.any(labels == 1)):
+            return
+        fpr, tpr, thresholds = roc_curve(labels, scores, pos_label=1, drop_intermediate=False)
+        precision, recall, pr_thresholds = precision_recall_curve(labels, scores, pos_label=1)
+        fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+        axes[0, 0].plot(fpr, tpr); axes[0, 0].axhline(.95, color="tab:red", ls="--")
+        axes[0, 0].set(xlabel="FPR", ylabel="TPR", title="ROC (95% TPR marked)")
+        axes[0, 1].plot(recall, precision); axes[0, 1].set(xlabel="Recall", ylabel="Precision", title="Precision-Recall")
+        if len(pr_thresholds):
+            pred = scores[:, None] >= pr_thresholds[None, :]
+            tp = ((labels[:, None] == 1) & pred).sum(axis=0); fp = ((labels[:, None] == 0) & pred).sum(axis=0)
+            fn = ((labels[:, None] == 1) & ~pred).sum(axis=0)
+            f1 = 2 * tp / np.maximum(2 * tp + fp + fn, 1)
+            axes[1, 0].plot(pr_thresholds, f1, label="F1")
+            axes[1, 0].plot(pr_thresholds, tp / np.maximum(tp + fp, 1), label="Precision")
+            axes[1, 0].plot(pr_thresholds, tp / np.maximum(tp + fn, 1), label="Recall")
+            axes[1, 0].legend(); axes[1, 0].set(xlabel="Threshold", title="Threshold trade-offs")
+        axes[1, 1].hist(scores[labels == 0], bins=30, alpha=.65, label="Normal")
+        axes[1, 1].hist(scores[labels == 1], bins=30, alpha=.65, label="Anomaly")
+        axes[1, 1].legend(); axes[1, 1].set(xlabel="Anomaly score", title="Score distributions")
+        fig.tight_layout(); fig.savefig(run_dir / output_filename, dpi=150); plt.close(fig)
+    except Exception as exc:
+        logger.warning("Could not write score diagnostics for %s: %s", run_dir, exc)
 
 def save_roc_plot(run_dir: Path, output_filename: str = "roc_curve.png") -> None:
     """Generates the ROC curve plot from run decisions.parquet and saves it as an image."""

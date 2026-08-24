@@ -1,385 +1,521 @@
-// HYDRA-LNN v2: Web Dashboard Client Javascript
-
-// 1. Dom elements selectors
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('csv-file-input');
-const fileName = document.getElementById('selected-file-name');
-const btnStart = document.getElementById('btn-start');
-const btnStop = document.getElementById('btn-stop');
-const speedLimit = document.getElementById('speed-limit');
-const limitRows = document.getElementById('limit-rows');
-const driftThreshold = document.getElementById('drift-threshold');
-const thresholdVal = document.getElementById('threshold-val');
-const btnClearTerminal = document.getElementById('btn-clear-terminal');
-const alertsConsole = document.getElementById('alerts-console');
-const statusIndicator = document.getElementById('system-status-indicator');
-const statusText = document.getElementById('system-status-text');
-
-// KPI elements selectors
-const kpiProcessed = document.getElementById('kpi-processed');
-const kpiProgress = document.getElementById('kpi-progress');
-const kpiLatency = document.getElementById('kpi-latency');
-const kpiJitter = document.getElementById('kpi-jitter');
-const kpiAnomalies = document.getElementById('kpi-anomalies');
-const kpiRate = document.getElementById('kpi-rate');
-const kpiThroughput = document.getElementById('kpi-throughput');
-
-// Stream state tracker
-let activeEventSource = null;
-let currentUploadedFileName = null;
-let totalProcessed = 0;
-let totalAnomalies = 0;
-let latencies = [];
-let jitterSum = 0.0;
-let lastLatency = 0.0;
-
-// Chart.js references
+// State variables
+let eventSource = null;
 let scoreChart = null;
 let latencyChart = null;
 let threatChart = null;
+let allBenchmarkRuns = [];
+let threatData = { 'Normal': 0 };
 
-// Track threat distributions
-let threatCounts = {
-    "Normal": 0,
-    "Anomalous (Generic)": 0,
-};
+// DOM Elements
+const tabLiveBtn = document.getElementById('tab-live-btn');
+const tabBenchBtn = document.getElementById('tab-bench-btn');
+const viewLive = document.getElementById('view-live');
+const viewBench = document.getElementById('view-benchmark');
 
-// 2. Slider threshold listener
-driftThreshold.addEventListener('input', (e) => {
-    thresholdVal.textContent = parseFloat(e.target.value).toFixed(1);
-});
+const datasetSelect = document.getElementById('dataset-select');
+const uploadZone = document.getElementById('upload-zone');
+const fileUploader = document.getElementById('file-uploader');
+const uploadFilename = document.getElementById('upload-filename');
 
-// 3. Drag & Drop CSV dataset upload listeners
-dropZone.addEventListener('click', () => fileInput.click());
+const streamSpeedInput = document.getElementById('stream-speed');
+const speedDisplay = document.getElementById('speed-display');
+const flowLimitInput = document.getElementById('flow-limit');
+const thresholdKInput = document.getElementById('threshold-k');
+const kDisplay = document.getElementById('k-display');
 
-fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-        handleSelectedFile(e.target.files[0]);
+const btnStartStream = document.getElementById('btn-start-stream');
+const btnStopStream = document.getElementById('btn-stop-stream');
+const btnClearConsole = document.getElementById('btn-clear-console');
+const consoleStream = document.getElementById('console-stream');
+const statusText = document.getElementById('status-text');
+
+// KPI elements
+const kpiF1 = document.getElementById('kpi-f1');
+const kpiF1Sub = document.getElementById('kpi-f1-sub');
+const kpiPrecRec = document.getElementById('kpi-prec-rec');
+const kpiPrecRecSub = document.getElementById('kpi-prec-rec-sub');
+const kpiAnomalies = document.getElementById('kpi-anomalies');
+const kpiAnomalyRate = document.getElementById('kpi-anomaly-rate');
+const kpiLatency = document.getElementById('kpi-latency');
+const kpiThroughput = document.getElementById('kpi-throughput');
+
+// Benchmark elements
+const benchDatasetSelect = document.getElementById('bench-dataset-select');
+const benchModelSelect = document.getElementById('bench-model-select');
+const benchLimit = document.getElementById('bench-limit');
+const btnRunBench = document.getElementById('btn-run-bench');
+const evalStatusBox = document.getElementById('eval-status-box');
+const benchResultCards = document.getElementById('bench-result-cards');
+const matrixTableBody = document.getElementById('matrix-table-body');
+const tableSearch = document.getElementById('table-search');
+
+// ================= TAB SWITCHING =================
+function switchTab(tab) {
+    if (tab === 'live') {
+        tabLiveBtn.classList.add('active');
+        tabBenchBtn.classList.remove('active');
+        viewLive.style.display = 'flex';
+        viewBench.style.display = 'none';
+    } else {
+        tabLiveBtn.classList.remove('active');
+        tabBenchBtn.classList.add('active');
+        viewLive.style.display = 'none';
+        viewBench.style.display = 'flex';
+        loadBenchmarkTable();
     }
-});
+}
 
-dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropZone.classList.add('drag-over');
-});
+// ================= EVENT LISTENERS =================
+if (streamSpeedInput) {
+    streamSpeedInput.addEventListener('input', (e) => {
+        speedDisplay.textContent = `${e.target.value} flows/s`;
+    });
+}
 
-dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('drag-over');
-});
+if (thresholdKInput) {
+    thresholdKInput.addEventListener('input', (e) => {
+        kDisplay.textContent = Number(e.target.value).toFixed(1);
+    });
+}
 
-dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    if (e.dataTransfer.files.length > 0) {
-        handleSelectedFile(e.dataTransfer.files[0]);
+if (datasetSelect) {
+    datasetSelect.addEventListener('change', (e) => {
+        // Dropdown selection handled automatically
+    });
+}
+
+const uploadStatus = document.getElementById('upload-status-indicator');
+
+// Upload handler function
+async function handleFileUpload(file) {
+    if (!file) return;
+    
+    if (uploadStatus) {
+        uploadStatus.textContent = `Uploading ${file.name}...`;
+        uploadStatus.style.color = '#3b82f6';
     }
-});
-
-function handleSelectedFile(file) {
-    if (!file.name.endsWith('.csv')) {
-        alert('Please select a valid CSV dataset file.');
-        return;
-    }
-    fileName.textContent = file.name;
-
-    // Upload file immediately via fetch
+    
     const formData = new FormData();
     formData.append('file', file);
-
-    updateStatus('orange', 'Uploading File...');
-
-    fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-    })
-        .then(res => res.json())
-        .then(data => {
-            if (data.status === 'success') {
-                currentUploadedFileName = file.name;
-                btnStart.disabled = false;
-                updateStatus('green', 'Ready to Ingest');
-                logTerminalLine(`[SYSTEM] Loaded dataset '${file.name}' successfully. Press Start to stream.`, 'system-line');
-            } else {
-                alert('Upload failed: ' + data.message);
-                updateStatus('red', 'Upload Error');
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            alert('Error uploading file: ' + err.message);
-            updateStatus('red', 'Server Disconnected');
+    
+    try {
+        const res = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
         });
-}
-
-// Status updating utility
-function updateStatus(dotClass, text) {
-    const dot = statusIndicator.querySelector('.status-dot');
-    dot.className = `status-dot ${dotClass}`;
-    statusText.textContent = text;
-}
-
-// Log line printing
-function logTerminalLine(text, cssClass) {
-    const line = document.createElement('div');
-    line.className = `console-line ${cssClass}`;
-    line.textContent = text;
-    alertsConsole.appendChild(line);
-    alertsConsole.scrollTop = alertsConsole.scrollHeight;
-
-    // Cap log lines inside browser to prevent memory bloat
-    if (alertsConsole.children.length > 200) {
-        alertsConsole.removeChild(alertsConsole.firstChild);
+        const data = await res.json();
+        if (data.status === 'success') {
+            if (uploadStatus) {
+                uploadStatus.textContent = `✅ Ready: ${file.name} (${Math.round(file.size/1024)} KB)`;
+                uploadStatus.style.color = '#10b981';
+            }
+            if (datasetSelect) {
+                datasetSelect.value = 'custom';
+            }
+            appendConsole(`[SYSTEM] Loaded custom dataset '${file.name}' (${data.size} bytes). Click "Start Ingestion" to run telemetry.`, 'system');
+        } else {
+            if (uploadStatus) {
+                uploadStatus.textContent = `❌ Upload Error: ${data.message}`;
+                uploadStatus.style.color = '#ef4444';
+            }
+            appendConsole(`[ERROR] File upload failed: ${data.message}`, 'alert');
+        }
+    } catch (err) {
+        if (uploadStatus) {
+            uploadStatus.textContent = `❌ Error: ${err.message}`;
+            uploadStatus.style.color = '#ef4444';
+        }
     }
 }
 
-btnClearTerminal.addEventListener('click', () => {
-    alertsConsole.innerHTML = '<div class="console-line system-line">[SYSTEM] Console cleared. Waiting for events...</div>';
-});
+if (fileUploader) {
+    fileUploader.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+            handleFileUpload(e.target.files[0]);
+        }
+    });
+}
 
-// 4. Initialize charts
+// Drag & Drop on Sidebar
+const sidebarElem = document.querySelector('.sidebar');
+if (sidebarElem) {
+    ['dragenter', 'dragover'].forEach(name => {
+        sidebarElem.addEventListener(name, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sidebarElem.style.background = '#152033';
+        });
+    });
+
+    ['dragleave', 'drop'].forEach(name => {
+        sidebarElem.addEventListener(name, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sidebarElem.style.background = 'var(--bg-surface)';
+        });
+    });
+
+    sidebarElem.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        if (dt && dt.files && dt.files.length > 0) {
+            handleFileUpload(dt.files[0]);
+        }
+    });
+}
+
+if (btnClearConsole) {
+    btnClearConsole.addEventListener('click', () => {
+        consoleStream.innerHTML = '';
+    });
+}
+
+// ================= CHART INITIALIZATION =================
 function initCharts() {
-    // Score Chart (Line)
-    const ctxScore = document.getElementById('scoreChart').getContext('2d');
-    scoreChart = new Chart(ctxScore, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [
-                {
-                    label: 'Calculated Drift Score',
-                    data: [],
-                    borderColor: '#ff9f43',
-                    borderWidth: 2,
-                    tension: 0.15,
-                    pointRadius: 0
+    const ctxScore = document.getElementById('scoreChart')?.getContext('2d');
+    if (ctxScore) {
+        scoreChart = new Chart(ctxScore, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Drift Score',
+                        data: [],
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1,
+                        fill: true
+                    },
+                    {
+                        label: 'Threshold',
+                        data: [],
+                        borderColor: '#ef4444',
+                        borderWidth: 1.5,
+                        borderDash: [4, 4],
+                        pointRadius: 0,
+                        tension: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: {
+                        grid: { color: '#1e293b' },
+                        ticks: { color: '#94a3b8', font: { size: 10 } }
+                    }
                 },
-                {
-                    label: 'Manifold Threshold',
-                    data: [],
-                    borderColor: '#ff4757',
-                    borderWidth: 1.5,
-                    borderDash: [5, 5],
-                    pointRadius: 0
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: false,
-            scales: {
-                x: { display: false },
-                y: { grid: { color: '#24314c' }, ticks: { color: '#8892b0' } }
-            },
-            plugins: {
-                legend: { labels: { color: '#e2e8f0' } }
-            }
-        }
-    });
-
-    // Latency Chart (Line)
-    const ctxLatency = document.getElementById('latencyChart').getContext('2d');
-    latencyChart = new Chart(ctxLatency, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [{
-                label: 'Latency (ms)',
-                data: [],
-                borderColor: '#00f2fe',
-                borderWidth: 2,
-                tension: 0.1,
-                pointRadius: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: false,
-            scales: {
-                x: { display: false },
-                y: { grid: { color: '#24314c' }, ticks: { color: '#8892b0' } }
-            },
-            plugins: { legend: { display: false } }
-        }
-    });
-
-    // Threat Category Distribution Chart (Doughnut)
-    const ctxThreat = document.getElementById('threatChart').getContext('2d');
-    threatChart = new Chart(ctxThreat, {
-        type: 'doughnut',
-        data: {
-            labels: Object.keys(threatCounts),
-            datasets: [{
-                data: Object.values(threatCounts),
-                backgroundColor: ['#2ed573', '#ff4757', '#ff9f43', '#a55eea', '#00f2fe', '#ffa502'],
-                borderWidth: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { color: '#e2e8f0', boxWidth: 12 }
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { color: '#94a3b8', boxWidth: 10, font: { size: 10 } }
+                    }
                 }
             }
-        }
-    });
-}
-
-// Helper to push update data to charts dynamically
-function updateCharts(flowIndex, score, threshold, isAnomaly, latency, category) {
-    // 1. Update Score Chart (cap at 50 data points)
-    scoreChart.data.labels.push(flowIndex);
-    scoreChart.data.datasets[0].data.push(score);
-    scoreChart.data.datasets[1].data.push(threshold);
-    if (scoreChart.data.labels.length > 50) {
-        scoreChart.data.labels.shift();
-        scoreChart.data.datasets[0].data.shift();
-        scoreChart.data.datasets[1].data.shift();
-    }
-    scoreChart.update();
-
-    // 2. Update Latency Chart (cap at 50 data points)
-    latencyChart.data.labels.push(flowIndex);
-    latencyChart.data.datasets[0].data.push(latency);
-    if (latencyChart.data.labels.length > 50) {
-        latencyChart.data.labels.shift();
-        latencyChart.data.datasets[0].data.shift();
-    }
-    latencyChart.update();
-
-    // 3. Update Threat Breakdown
-    let key = isAnomaly ? (category || "Anomalous (Generic)") : "Normal";
-    if (!threatCounts[key]) {
-        threatCounts[key] = 0;
-    }
-    threatCounts[key]++;
-
-    threatChart.data.labels = Object.keys(threatCounts);
-    threatChart.data.datasets[0].data = Object.values(threatCounts);
-    threatChart.update();
-}
-
-// 5. Start / Stop Stream Actions
-btnStart.addEventListener('click', () => {
-    // Clear state
-    totalProcessed = 0;
-    totalAnomalies = 0;
-    latencies = [];
-    jitterSum = 0.0;
-    lastLatency = 0.0;
-    threatCounts = { "Normal": 0 };
-
-    // Reset KPIs
-    kpiProcessed.textContent = "0";
-    kpiProgress.textContent = "0% of target";
-    kpiLatency.textContent = "0.00 ms";
-    kpiJitter.textContent = "Jitter: 0.00 ms";
-    kpiAnomalies.textContent = "0";
-    kpiRate.textContent = "Drift Rate: 0.0%";
-    kpiThroughput.textContent = "0.0 /s";
-
-    // Clear and redraw charts
-    if (scoreChart) scoreChart.destroy();
-    if (latencyChart) latencyChart.destroy();
-    if (threatChart) threatChart.destroy();
-    initCharts();
-
-    logTerminalLine("[SYSTEM] Initializing Streaming Ingest Sidecar loop...", "system-line");
-    updateStatus('orange', 'Ingesting...');
-
-    btnStart.disabled = true;
-    btnStop.disabled = false;
-    dropZone.style.pointerEvents = 'none';
-
-    // Build query args
-    const speed = speedLimit.value || 100;
-    const limit = limitRows.value || 5000;
-    const k = driftThreshold.value || 3.0;
-
-    // Initialize SSE streaming EventSource
-    const sseUrl = `/api/stream?speed=${speed}&limit=${limit}&k=${k}`;
-    activeEventSource = new EventSource(sseUrl);
-
-    activeEventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-
-        if (data.type === 'progress') {
-            totalProcessed = data.processed;
-            totalAnomalies = data.anomalies;
-
-            // Statistics calculation
-            const progressPercent = Math.min(100, Math.round((totalProcessed / limit) * 100));
-            kpiProcessed.textContent = totalProcessed;
-            kpiProgress.textContent = `${progressPercent}% of target`;
-            kpiAnomalies.textContent = totalAnomalies;
-            kpiRate.textContent = `Drift Rate: ${((totalAnomalies / totalProcessed) * 100).toFixed(1)}%`;
-            kpiThroughput.textContent = `${data.throughput.toFixed(1)} /s`;
-
-            // Latency statistics
-            const lat = data.latency * 1000.0; // convert to ms
-            latencies.push(lat);
-            if (latencies.length > 200) latencies.shift();
-
-            const avgLat = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-            kpiLatency.textContent = `${avgLat.toFixed(2)} ms`;
-
-            // Jitter calculation (average difference between sequential latencies)
-            if (lastLatency > 0.0) {
-                const jitter = Math.abs(lat - lastLatency);
-                jitterSum = 0.95 * jitterSum + 0.05 * jitter; // EWMA jitter
-            }
-            lastLatency = lat;
-            kpiJitter.textContent = `Jitter: ${jitterSum.toFixed(2)} ms`;
-
-            // Update charts
-            updateCharts(data.index, data.score, data.threshold, data.is_anomaly, lat, data.attack_cat);
-
-        } else if (data.type === 'alert') {
-            // Print alert in console
-            logTerminalLine(`🚨 [CEF ALERT] ${data.alert_text}`, 'alert-line');
-
-        } else if (data.type === 'system') {
-            logTerminalLine(`[SYSTEM] ${data.message}`, 'system-line');
-
-        } else if (data.type === 'complete') {
-            logTerminalLine(`[SYSTEM] Ingestion simulation completed successfully.`, 'system-line');
-            logTerminalLine(`[SYSTEM] Stats: ${data.total_processed} flows processed. ${data.total_anomalies} anomalies alerts triggered. Avg Latency: ${data.avg_latency_ms.toFixed(2)} ms.`, 'system-line');
-            stopSimulation('Standby', 'green');
-        }
-    };
-
-    activeEventSource.onerror = (err) => {
-        console.error("SSE stream error: ", err);
-        logTerminalLine("[SYSTEM ERROR] SSE connection dropped unexpectedly.", "alert-line");
-        stopSimulation('Disconnected', 'red');
-    };
-});
-
-btnStop.addEventListener('click', () => {
-    logTerminalLine("[SYSTEM] Stopping active ingestion manually...", "system-line");
-    fetch('/api/stop', { method: 'POST' })
-        .then(() => {
-            stopSimulation('Standby', 'green');
-            logTerminalLine("[SYSTEM] Ingestion loop stopped.", "system-line");
         });
-});
-
-function stopSimulation(statusLabel, statusColor) {
-    if (activeEventSource) {
-        activeEventSource.close();
-        activeEventSource = null;
     }
-    btnStart.disabled = false;
-    btnStop.disabled = true;
-    dropZone.style.pointerEvents = 'auto';
-    updateStatus(statusColor, statusLabel);
+
+    const ctxLat = document.getElementById('latencyChart')?.getContext('2d');
+    if (ctxLat) {
+        latencyChart = new Chart(ctxLat, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Latency (ms)',
+                    data: [],
+                    borderColor: '#10b981',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: {
+                        grid: { color: '#1e293b' },
+                        ticks: { color: '#94a3b8', font: { size: 10 } }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    const ctxThreat = document.getElementById('threatChart')?.getContext('2d');
+    if (ctxThreat) {
+        threatChart = new Chart(ctxThreat, {
+            type: 'doughnut',
+            data: {
+                labels: ['Normal'],
+                datasets: [{
+                    data: [1],
+                    backgroundColor: ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { color: '#94a3b8', boxWidth: 8, font: { size: 10 } }
+                    }
+                }
+            }
+        });
+    }
 }
 
-// Window load init
-window.addEventListener('load', () => {
+function appendConsole(text, type = 'info') {
+    if (!consoleStream) return;
+    const entry = document.createElement('div');
+    entry.className = `log-${type}`;
+    entry.textContent = text;
+    consoleStream.appendChild(entry);
+    consoleStream.scrollTop = consoleStream.scrollHeight;
+}
+
+// ================= STREAM TELEMETRY =================
+function startStreamTelemetry() {
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    const dataset = datasetSelect ? datasetSelect.value : 'UNSW_NB15_testing-set.csv';
+    const speed = streamSpeedInput ? streamSpeedInput.value : 200;
+    const limit = flowLimitInput ? flowLimitInput.value : 3000;
+    const k = thresholdKInput ? thresholdKInput.value : 3.0;
+
+    if (scoreChart) {
+        scoreChart.data.labels = [];
+        scoreChart.data.datasets[0].data = [];
+        scoreChart.data.datasets[1].data = [];
+        scoreChart.update();
+    }
+
+    if (latencyChart) {
+        latencyChart.data.labels = [];
+        latencyChart.data.datasets[0].data = [];
+        latencyChart.update();
+    }
+
+    threatData = { 'Normal': 0 };
+    if (threatChart) {
+        threatChart.data.labels = ['Normal'];
+        threatChart.data.datasets[0].data = [0];
+        threatChart.update();
+    }
+
+    if (btnStartStream) btnStartStream.disabled = true;
+    if (btnStopStream) btnStopStream.disabled = false;
+    if (statusText) statusText.textContent = 'Streaming Telemetry...';
+    const dot = document.getElementById('system-status-indicator')?.querySelector('.status-dot');
+    if (dot) dot.className = 'status-dot yellow';
+
+    appendConsole(`[SYSTEM] Starting live telemetry: dataset=${dataset}, speed=${speed} flows/s, k=${k}`, 'system');
+
+    const url = `/api/stream?dataset_name=${encodeURIComponent(dataset)}&speed=${speed}&limit=${limit}&threshold_k=${k}`;
+    eventSource = new EventSource(url);
+
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'system') {
+                appendConsole(`[SYSTEM] ${data.message}`, 'system');
+            } else if (data.type === 'alert') {
+                appendConsole(`[ALERT] ${data.text}`, 'alert');
+            } else if (data.type === 'progress') {
+                if (kpiF1) kpiF1.textContent = Number(data.f1_score).toFixed(4);
+                if (kpiF1Sub) kpiF1Sub.textContent = `Flow #${data.index} of ${limit}`;
+                if (kpiPrecRec) kpiPrecRec.textContent = `${Number(data.precision).toFixed(3)} / ${Number(data.recall).toFixed(3)}`;
+                if (kpiPrecRecSub) kpiPrecRecSub.textContent = `P: ${(data.precision*100).toFixed(1)}% | R: ${(data.recall*100).toFixed(1)}%`;
+                if (kpiAnomalies) kpiAnomalies.textContent = data.anomalies;
+                if (kpiAnomalyRate) kpiAnomalyRate.textContent = `Drift Rate: ${((data.anomalies / data.processed)*100).toFixed(1)}%`;
+                if (kpiLatency) kpiLatency.textContent = `${Number(data.latency_ms).toFixed(2)} ms`;
+                if (kpiThroughput) kpiThroughput.textContent = `${Math.round(data.throughput)} flows/s`;
+
+                if (scoreChart) {
+                    scoreChart.data.labels.push(data.index);
+                    scoreChart.data.datasets[0].data.push(data.score);
+                    scoreChart.data.datasets[1].data.push(data.threshold);
+                    if (scoreChart.data.labels.length > 50) {
+                        scoreChart.data.labels.shift();
+                        scoreChart.data.datasets[0].data.shift();
+                        scoreChart.data.datasets[1].data.shift();
+                    }
+                    scoreChart.update();
+                }
+
+                if (latencyChart) {
+                    latencyChart.data.labels.push(data.index);
+                    latencyChart.data.datasets[0].data.push(data.latency_ms);
+                    if (latencyChart.data.labels.length > 50) {
+                        latencyChart.data.labels.shift();
+                        latencyChart.data.datasets[0].data.shift();
+                    }
+                    latencyChart.update();
+                }
+
+                const cat = data.threat_category || 'Normal';
+                threatData[cat] = (threatData[cat] || 0) + 1;
+                if (threatChart) {
+                    threatChart.data.labels = Object.keys(threatData);
+                    threatChart.data.datasets[0].data = Object.values(threatData);
+                    threatChart.update();
+                }
+            } else if (data.type === 'complete') {
+                appendConsole(`[COMPLETE] Finished: ${data.total_processed} flows, F1=${Number(data.f1_score).toFixed(4)}, P=${Number(data.precision).toFixed(4)}, R=${Number(data.recall).toFixed(4)}`, 'system');
+                cleanupStreamUI();
+            } else if (data.type === 'error') {
+                appendConsole(`[ERROR] ${data.message}`, 'alert');
+                cleanupStreamUI();
+            }
+        };
+
+        eventSource.onerror = () => {
+            appendConsole('[SYSTEM] SSE stream ended.', 'info');
+            cleanupStreamUI();
+        };
+}
+
+async function stopStreamTelemetry() {
+    try {
+        await fetch('/api/stop', { method: 'POST' });
+        appendConsole('[SYSTEM] Ingestion paused by operator.', 'system');
+    } catch (e) {}
+    cleanupStreamUI();
+}
+
+if (btnStopStream) {
+    btnStopStream.addEventListener('click', stopStreamTelemetry);
+}
+
+function cleanupStreamUI() {
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    if (btnStartStream) btnStartStream.disabled = false;
+    if (btnStopStream) btnStopStream.disabled = true;
+    if (statusText) statusText.textContent = 'System Standby';
+    const dot = document.getElementById('system-status-indicator')?.querySelector('.status-dot');
+    if (dot) dot.className = 'status-dot green';
+}
+
+// ================= BENCHMARK HARNESS RUNNER =================
+if (btnRunBench) {
+    btnRunBench.addEventListener('click', async () => {
+        const dataset = benchDatasetSelect.value;
+        const model = benchModelSelect.value;
+        const limit = benchLimit.value;
+
+        evalStatusBox.textContent = `Evaluating ${model} on ${dataset}...`;
+        evalStatusBox.style.color = '#3b82f6';
+        btnRunBench.disabled = true;
+
+        try {
+            const res = await fetch(`/api/evaluate_benchmark?dataset_name=${encodeURIComponent(dataset)}&baseline_model=${encodeURIComponent(model)}&limit=${limit}`, {
+                method: 'POST'
+            });
+            const data = await res.json();
+
+            if (data.status === 'success') {
+                const m = data.metrics;
+                evalStatusBox.textContent = `Done: Run ${data.run_id}`;
+                evalStatusBox.style.color = '#10b981';
+
+                benchResultCards.style.display = 'grid';
+                document.getElementById('bench-res-f1').textContent = Number(m.f1_score || 0).toFixed(4);
+                document.getElementById('bench-res-prec-rec').textContent = `${Number(m.precision || 0).toFixed(4)} / ${Number(m.recall || 0).toFixed(4)}`;
+                document.getElementById('bench-res-auc').textContent = `${Number(m.auroc || 0).toFixed(4)} / ${Number(m.pr_auc || 0).toFixed(4)}`;
+                document.getElementById('bench-res-fpr95').textContent = Number(m.fpr_at_95_tpr || 0).toFixed(4);
+
+                loadBenchmarkTable();
+            } else {
+                evalStatusBox.textContent = `Failed: ${data.message}`;
+                evalStatusBox.style.color = '#ef4444';
+            }
+        } catch (err) {
+            evalStatusBox.textContent = `Error: ${err.message}`;
+            evalStatusBox.style.color = '#ef4444';
+        } finally {
+            btnRunBench.disabled = false;
+        }
+    });
+}
+
+// ================= BENCHMARK MATRIX TABLE =================
+async function loadBenchmarkTable() {
+    if (!matrixTableBody) return;
+    matrixTableBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">Loading empirical benchmark results...</td></tr>';
+    try {
+        const res = await fetch('/api/benchmarks_summary');
+        const data = await res.json();
+        if (data.status === 'success') {
+            allBenchmarkRuns = data.runs;
+            renderBenchmarkTable(allBenchmarkRuns);
+        }
+    } catch (err) {
+        matrixTableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: #ef4444; padding: 20px;">Failed to load benchmark table: ${err.message}</td></tr>`;
+    }
+}
+
+function renderBenchmarkTable(runs) {
+    if (!matrixTableBody) return;
+    if (!runs || runs.length === 0) {
+        matrixTableBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">No evaluated benchmarks found. Run an evaluation above.</td></tr>';
+        return;
+    }
+
+    const query = (tableSearch?.value || '').toLowerCase();
+    const filtered = runs.filter(r => 
+        r.dataset.toLowerCase().includes(query) || 
+        r.baseline.toLowerCase().includes(query) ||
+        r.run_id.toLowerCase().includes(query)
+    );
+
+    matrixTableBody.innerHTML = filtered.map(r => {
+        const isOurs = r.baseline.includes('hdc-lnn');
+        const f1 = Number(r.f1_score).toFixed(4);
+        let badgeClass = 'metric-bad';
+        if (r.f1_score >= 0.85) badgeClass = 'metric-good';
+        else if (r.f1_score >= 0.65) badgeClass = 'metric-avg';
+
+        return `
+            <tr class="${isOurs ? 'highlight' : ''}">
+                <td><strong>${r.baseline.toUpperCase()}</strong></td>
+                <td>${r.dataset}</td>
+                <td><span class="metric-badge ${badgeClass}">${f1}</span></td>
+                <td>${Number(r.precision).toFixed(4)}</td>
+                <td>${Number(r.recall).toFixed(4)}</td>
+                <td>${Number(r.auroc).toFixed(4)}</td>
+                <td>${Number(r.pr_auc).toFixed(4)}</td>
+                <td>${Number(r.fpr_at_95_tpr).toFixed(4)}</td>
+                <td>${Number(r.latency_ms_per_flow).toFixed(2)} ms</td>
+                <td>${Math.round(r.throughput_flows_sec)} /s</td>
+                <td>${Math.round(r.peak_rss_mb)} MB</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+if (tableSearch) {
+    tableSearch.addEventListener('input', () => {
+        renderBenchmarkTable(allBenchmarkRuns);
+    });
+}
+
+window.addEventListener('DOMContentLoaded', () => {
     initCharts();
 });

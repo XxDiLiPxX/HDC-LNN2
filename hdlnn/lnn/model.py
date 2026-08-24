@@ -51,34 +51,20 @@ class LNNSequenceModel(nn.Module, ISequenceModel):
     def step(self, x: torch.Tensor, h_prev: torch.Tensor, dt: torch.Tensor) -> torch.Tensor:
         """Evaluates continuous state transition for a single time step.
         
-        Runs the exact same sequence evaluation path to guarantee strict numerical parity.
-        
-        Args:
-            x: current input vector of shape [batch_size, input_dim]
-            h_prev: previous hidden state of shape [batch_size, hidden_dim]
-            dt: delta time of shape [batch_size] or [batch_size, 1]
-            
-        Returns:
-            torch.Tensor: The next hidden state vector of shape [batch_size, hidden_dim]
+        Uses the underlying CfC cell directly to eliminate sequence wrapping overhead
+        while guaranteeing strict mathematical equivalence.
+        Assumes inputs: x=[B, D] or [D], h_prev=[B, H] or [H], dt=[B] or [B, 1] or scalar.
         """
-        # Ensure dimensions match batched expectations
-        if x.dim() == 1:
-            x = x.unsqueeze(0)
-        if h_prev.dim() == 1:
-            h_prev = h_prev.unsqueeze(0)
-            
-        # Form sequence of length 1
-        x_seq = x.unsqueeze(1)  # [batch_size, 1, input_dim]
+        x_2d = x.unsqueeze(0) if x.dim() == 1 else (x.squeeze(1) if x.dim() == 3 else x)
+        h_2d = h_prev.unsqueeze(0) if h_prev.dim() == 1 else h_prev
+        dt_flat = dt.view(-1) if dt.dim() > 0 else dt.unsqueeze(0)
         
-        if dt.dim() == 1:
-            dt_seq = dt.unsqueeze(1)
-        elif dt.dim() == 2:
-            dt_seq = dt
+        if hasattr(self.cfc, "rnn_cell"):
+            _, h_next = self.cfc.rnn_cell(x_2d, h_2d, dt_flat)
         else:
-            dt_seq = dt.view(x.size(0), 1)
-
-        # Call underlying CfC module forward pass with seq_len = 1
-        _, h_next = self.cfc(x_seq, hx=h_prev, timespans=dt_seq)
+            x_seq = x_2d.unsqueeze(1)
+            dt_seq = dt_flat.view(x_2d.size(0), 1)
+            _, h_next = self.cfc(x_seq, hx=h_2d, timespans=dt_seq)
         return h_next
 
     def predict_next_vector(self, state: torch.Tensor) -> torch.Tensor:

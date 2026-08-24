@@ -51,3 +51,12 @@ def test_compute_metrics_suite():
     assert suite["throughput_flows_sec"] == 4.0
     assert suite["latency_ms_per_flow"] == 250.0
     assert "peak_rss_mb" in suite
+    assert suite["score_direction"] == "higher_is_anomalous"
+
+def test_roc_metrics_handle_tied_scores_consistently():
+    # A tied normal/anomaly score must receive the same ROC treatment in AUROC
+    # and the operating point calculation; the 95% TPR point includes the tie.
+    labels = np.array([0, 0, 1, 1])
+    scores = np.array([0.2, 0.8, 0.8, 0.9])
+    assert calculate_auroc(labels, scores) == pytest.approx(0.875)
+    assert calculate_fpr_at_95_tpr(labels, scores) == pytest.approx(0.5)

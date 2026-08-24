@@ -1,132 +1,1332 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HYDRA-LNN v2: Behavioral Drift Dashboard</title>
+    <title>HDC-LNN Benchmark & Telemetry Control Center</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
-    <!-- Chart.js CDN -->
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
+    <style>
+        :root {
+            --bg-base: #0a0e17;
+            --bg-surface: #111827;
+            --bg-surface-elevated: #1e293b;
+            --bg-card: #141e33;
+            --border-color: #24344d;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --color-primary: #3b82f6;
+            --color-primary-hover: #2563eb;
+            --color-success: #10b981;
+            --color-warning: #f59e0b;
+            --color-danger: #ef4444;
+            --color-accent: #8b5cf6;
+            --font-main: 'Inter', -apple-system, sans-serif;
+            --font-code: 'Fira Code', monospace;
+        }
 
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            font-size: 13px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+
+        /* Top Header */
+        .app-header {
+            height: 60px;
+            background-color: var(--bg-surface);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            flex-shrink: 0;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-icon {
+            font-size: 22px;
+        }
+
+        .brand-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--color-primary);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            margin-left: 6px;
+        }
+
+        .brand-subtitle {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Navigation Tabs */
+        .nav-tabs {
+            display: flex;
+            gap: 6px;
+            background: var(--bg-base);
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .nav-tab {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .nav-tab:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .nav-tab.active {
+            background: var(--bg-surface-elevated);
+            color: #fff;
+            border: 1px solid var(--border-color);
+        }
+
+        /* System Status */
+        .system-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-dot.green {
+            background-color: var(--color-success);
+            box-shadow: 0 0 8px var(--color-success);
+        }
+
+        .status-dot.yellow {
+            background-color: var(--color-warning);
+            box-shadow: 0 0 8px var(--color-warning);
+        }
+
+        /* Main Workspace Container */
+        .app-workspace {
+            flex: 1;
+            height: calc(100vh - 60px);
+            width: 100%;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .tab-view {
+            width: 100%;
+            height: 100%;
+            display: flex;
+        }
+
+        /* ================= LIVE STREAM TAB ================= */
+        .live-layout {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border-color);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .panel-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .panel-box h3 {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--text-muted);
+            font-weight: 700;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .highlight-val {
+            color: var(--color-primary);
+            font-family: var(--font-code);
+        }
+
+        .form-select, .form-input {
+            background: var(--bg-surface-elevated);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            outline: none;
+            width: 100%;
+        }
+
+        .form-select:focus, .form-input:focus {
+            border-color: var(--color-primary);
+        }
+
+        .form-range {
+            accent-color: var(--color-primary);
+            cursor: pointer;
+            width: 100%;
+        }
+
+        /* Large Prominent Drag and Drop Zone */
+        .drop-zone-large {
+            border: 2px dashed #3b82f6;
+            border-radius: 8px;
+            padding: 22px 14px;
+            text-align: center;
+            cursor: pointer;
+            background: rgba(59, 130, 246, 0.06);
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .drop-zone-large:hover, .drop-zone-large.dragover {
+            border-color: #10b981;
+            background: rgba(16, 185, 129, 0.12);
+            transform: scale(1.01);
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 10px 14px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: opacity 0.2s;
+        }
+
+        .btn-primary { background: var(--color-primary); color: #fff; }
+        .btn-success { background: var(--color-success); color: #fff; }
+        .btn-danger { background: var(--color-danger); color: #fff; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-sm {
+            background: var(--bg-surface-elevated);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            padding: 3px 8px;
+            font-size: 11px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        /* Live Main Area */
+        .live-main {
+            flex: 1;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            overflow-y: auto;
+            height: 100%;
+        }
+
+        /* KPI Cards */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .kpi-card.f1 { border-top: 3px solid var(--color-primary); }
+        .kpi-card.anomalies { border-top: 3px solid var(--color-warning); }
+        .kpi-card.speed { border-top: 3px solid var(--color-accent); }
+
+        .kpi-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .kpi-val {
+            font-size: 22px;
+            font-weight: 700;
+            font-family: var(--font-code);
+            color: #fff;
+        }
+
+        .kpi-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Charts Row */
+        .charts-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 12px;
+            height: 220px;
+            flex-shrink: 0;
+        }
+
+        .chart-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow: hidden;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chart-header h4 {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .chart-body {
+            flex: 1;
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Console */
+        .console-panel {
+            background: #070a12;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 150px;
+            overflow: hidden;
+        }
+
+        .console-top {
+            background: #0d1322;
+            padding: 6px 12px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .console-log {
+            flex: 1;
+            padding: 8px 12px;
+            overflow-y: auto;
+            font-family: var(--font-code);
+            font-size: 11px;
+            line-height: 1.6;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .log-info { color: var(--text-muted); }
+        .log-alert { color: #f87171; }
+        .log-system { color: #60a5fa; }
+
+        /* ================= BENCHMARK TAB ================= */
+        .benchmark-layout {
+            width: 100%;
+            height: 100%;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            overflow-y: auto;
+        }
+
+        .bench-top-bar {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .bench-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .bench-field {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .status-pill {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            background: var(--bg-surface-elevated);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        .table-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .table-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-top h3 {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .table-scroll {
+            flex: 1;
+            overflow-x: auto;
+            overflow-y: auto;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .data-table th {
+            background: var(--bg-surface-elevated);
+            padding: 8px 12px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            text-align: left;
+        }
+
+        .data-table td {
+            padding: 7px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            font-family: var(--font-code);
+            white-space: nowrap;
+        }
+
+        .data-table tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .data-table tr.highlight td {
+            background: rgba(59, 130, 246, 0.08);
+            font-weight: 600;
+        }
+
+        .metric-badge {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        .metric-good { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+        .metric-avg { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+        .metric-bad { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+    </style>
+</head>
 <body>
+    <!-- Header -->
     <header class="app-header">
-        <div class="header-logo">
-            <span class="logo-accent">⚡</span> HYDRA-LNN <span class="logo-sub">v2</span>
+        <div class="header-brand">
+            <span class="brand-icon">⚡</span>
+            <div>
+                <span class="brand-title">HDC-LNN <span class="badge">v2.0 PRO</span></span>
+                <div class="brand-subtitle">Continuous Temporal Manifold & Anomaly Engine</div>
+            </div>
         </div>
-        <div class="header-title">Behavioral Drift & Anomaly Ingestion Engine</div>
+
+        <nav class="nav-tabs">
+            <button class="nav-tab active" id="tab-live-btn" onclick="switchTab('live')">
+                <span>📡</span> Live Telemetry Stream
+            </button>
+            <button class="nav-tab" id="tab-bench-btn" onclick="switchTab('benchmark')">
+                <span>📊</span> Benchmark Matrix & Harness
+            </button>
+        </nav>
+
         <div class="system-status" id="system-status-indicator">
             <span class="status-dot green"></span>
-            <span class="status-text" id="system-status-text">System Standby</span>
+            <span id="status-text">System Standby</span>
         </div>
     </header>
 
-    <main class="app-layout">
-        <!-- Sidebar controls -->
-        <aside class="control-panel">
-            <div class="panel-section">
-                <h2>1. Dataset Ingestion</h2>
-                <div class="upload-area" id="drop-zone">
-                    <input type="file" id="csv-file-input" accept=".csv" style="display: none;">
-                    <span class="upload-icon">📁</span>
-                    <p class="upload-text">Drag & Drop or <span class="highlight">Browse</span></p>
-                    <p class="file-info" id="selected-file-name">No CSV file loaded</p>
-                </div>
-            </div>
+    <!-- App Workspace -->
+    <main class="app-workspace">
+        <!-- ================= LIVE STREAM TAB ================= -->
+        <div class="tab-view" id="view-live" style="display: flex;">
+            <div class="live-layout">
+                <!-- Left Sidebar -->
+                <aside class="sidebar">
+                    <div class="panel-box">
+                        <h3>1. Ingestion Source</h3>
+                        <div class="form-group">
+                            <label for="dataset-select">Select Benchmark Dataset</label>
+                            <select id="dataset-select" class="form-select">
+                                <option value="UNSW_NB15_testing-set.csv">UNSW_NB15_testing-set.csv (Primary)</option>
+                                <option value="NSL_KDD_Test.csv">NSL_KDD_Test.csv (Primary)</option>
+                                <option value="kdd_test.csv">kdd_test.csv (Primary)</option>
+                                <option value="NSL_KDD_Train.csv">NSL_KDD_Train.csv</option>
+                                <option value="kdd_train.csv">kdd_train.csv</option>
+                                <option value="dataset17.csv">dataset17.csv (IoT-23)</option>
+                                <option value="dataset19.csv">dataset19.csv (IoT-23)</option>
+                                <option value="dataset5.csv">dataset5.csv (IoT-23)</option>
+                                <option value="dataset23.csv">dataset23.csv (IoT-23)</option>
+                                <option value="dataset11.csv">dataset11.csv (IoT-23)</option>
+                                <option value="ton-iot.csv">ton-iot.csv</option>
+                                <option value="custom">-- Custom Uploaded File --</option>
+                            </select>
+                        </div>
 
-            <div class="panel-section">
-                <h2>2. Pipeline Configuration</h2>
-                <div class="form-group">
-                    <label for="speed-limit">Stream Speed Limit (events/sec)</label>
-                    <input type="number" id="speed-limit" min="1" max="5000" value="100">
+                        <!-- Large Drag & Drop Box -->
+                        <div class="form-group" style="margin-top: 6px;">
+                            <label style="color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase;">Or Drop / Browse Custom CSV</label>
+                            <div class="drop-zone-large" id="drop-zone-target" onclick="triggerFileInput()">
+                                <input type="file" id="file-uploader" accept=".csv" style="display: none;">
+                                <span style="font-size: 26px;">📁</span>
+                                <span style="font-weight: 700; color: #3b82f6; font-size: 13px;">Drag & Drop CSV Here</span>
+                                <span id="upload-status-indicator" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-code);">or click to browse files</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel-box">
+                        <h3>2. Stream Parameters</h3>
+                        <div class="form-group">
+                            <label for="stream-speed">Stream Speed: <span id="speed-display" class="highlight-val">200 flows/s</span></label>
+                            <input type="range" id="stream-speed" min="10" max="5000" step="50" value="200" class="form-range">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="flow-limit">Max Ingestion Flows</label>
+                            <input type="number" id="flow-limit" min="100" max="50000" value="3000" class="form-input">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="threshold-k">Threshold Multiplier ($k$): <span id="k-display" class="highlight-val">3.0</span></label>
+                            <input type="range" id="threshold-k" min="1.0" max="8.0" step="0.1" value="3.0" class="form-range">
+                        </div>
+
+                        <div class="btn-row">
+                            <button class="btn btn-success" id="btn-start-stream" onclick="startStreamTelemetry()">▶ Start Ingestion</button>
+                            <button class="btn btn-danger" id="btn-stop-stream" disabled onclick="stopStreamTelemetry()">⏹ Stop</button>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Right Main Analytics -->
+                <section class="live-main">
+                    <!-- KPI Cards (Ingestion & Performance Only, No F1/Precision/Recall) -->
+                    <div class="kpi-grid">
+                        <div class="kpi-card f1">
+                            <div class="kpi-label">Processed Ingestion Flows</div>
+                            <div class="kpi-val" id="kpi-processed">0</div>
+                            <div class="kpi-sub" id="kpi-processed-sub">Real-Time Ingestion Counter</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-label">Benign vs Anomalies</div>
+                            <div class="kpi-val" id="kpi-flow-counts">0 / 0</div>
+                            <div class="kpi-sub" id="kpi-flow-counts-sub">Normal: 0 | Anomaly: 0</div>
+                        </div>
+                        <div class="kpi-card anomalies">
+                            <div class="kpi-label">Drift Anomalies Detected</div>
+                            <div class="kpi-val" id="kpi-anomalies">0</div>
+                            <div class="kpi-sub" id="kpi-anomaly-rate">Drift Rate: 0.0%</div>
+                        </div>
+                        <div class="kpi-card speed">
+                            <div class="kpi-label">Inference Latency / Speed</div>
+                            <div class="kpi-val" id="kpi-latency">0.10 ms</div>
+                            <div class="kpi-sub" id="kpi-throughput">0 flows/s</div>
+                        </div>
+                    </div>
+
+                    <!-- Charts Grid -->
+                    <div class="charts-row">
+                        <div class="chart-panel">
+                            <div class="chart-header">
+                                <h4>Continuous State Drift vs. Calibrated Threshold</h4>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="scoreChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="chart-panel">
+                            <div class="chart-header">
+                                <h4>Per-Flow Classification Latency Trend (ms)</h4>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="latencyChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="chart-panel">
+                            <div class="chart-header">
+                                <h4>Threat & Anomaly Distribution</h4>
+                            </div>
+                            <div class="chart-body">
+                                <canvas id="threatChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Console Box -->
+                    <div class="console-panel">
+                        <div class="console-top">
+                            <span>🚨 SIEM / SOAR CEF Audited Event Log</span>
+                            <button class="btn-sm" id="btn-clear-console" onclick="clearConsoleLog()">Clear</button>
+                        </div>
+                        <div class="console-log" id="console-stream">
+                            <div class="log-info">[SYSTEM] Engine Standby. Select dataset and click "Start Ingestion".</div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- ================= BENCHMARK TAB ================= -->
+        <div class="tab-view" id="view-benchmark" style="display: none;">
+            <div class="benchmark-layout">
+                <div class="bench-top-bar">
+                    <div class="bench-controls">
+                        <div class="bench-field">
+                            <label>Target Dataset:</label>
+                            <select id="bench-dataset-select" class="form-select" style="width: 240px;" onchange="loadBenchmarkTable()">
+                                <option value="custom">-- Currently Uploaded Custom CSV --</option>
+                                <option value="UNSW_NB15_testing-set.csv">UNSW_NB15_testing-set.csv (Primary)</option>
+                                <option value="NSL_KDD_Test.csv">NSL_KDD_Test.csv (Primary)</option>
+                                <option value="kdd_test.csv">kdd_test.csv (Primary)</option>
+                                <option value="NSL_KDD_Train.csv">NSL_KDD_Train.csv</option>
+                                <option value="kdd_train.csv">kdd_train.csv</option>
+                                <option value="dataset17.csv">dataset17.csv (IoT-23)</option>
+                                <option value="dataset19.csv">dataset19.csv (IoT-23)</option>
+                                <option value="dataset5.csv">dataset5.csv (IoT-23)</option>
+                                <option value="dataset23.csv">dataset23.csv (IoT-23)</option>
+                                <option value="dataset11.csv">dataset11.csv (IoT-23)</option>
+                            </select>
+                        </div>
+
+                        <div class="bench-field">
+                            <label>Model:</label>
+                            <select id="bench-model-select" class="form-select" style="width: 200px;">
+                                <option value="hdc-lnn">HDC-LNN (Ours)</option>
+                                <option value="mamba2">Mamba-2 (Pure PyTorch SSM)</option>
+                                <option value="cnn">1D-CNN (Temporal Conv)</option>
+                                <option value="autoencoder">Autoencoder (LSTM-AE)</option>
+                                <option value="lstm">LSTM (Recurrent Baseline)</option>
+                            </select>
+                        </div>
+
+                        <div class="bench-field">
+                            <label>Evaluation Limit:</label>
+                            <input type="number" id="bench-limit" value="5000" min="500" max="25000" class="form-input" style="width: 90px;">
+                        </div>
+
+                        <button class="btn btn-primary" id="btn-run-bench" onclick="runBenchmarkEvaluation()">⚡ Run Evaluation</button>
+                    </div>
+
+                    <div id="eval-status-box" class="status-pill">Ready to run verification</div>
                 </div>
-                <div class="form-group">
-                    <label for="limit-rows">Max Ingestion Flows</label>
-                    <input type="number" id="limit-rows" min="10" max="100000" value="5000">
+
+                <!-- On-demand Evaluation Results -->
+                <div id="bench-result-cards" class="kpi-grid" style="display: none;">
+                    <div class="kpi-card f1">
+                        <div class="kpi-label">F1 Score</div>
+                        <div class="kpi-val" id="bench-res-f1">0.0000</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Precision / Recall</div>
+                        <div class="kpi-val" id="bench-res-prec-rec">0.00 / 0.00</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">AUROC / PR-AUC</div>
+                        <div class="kpi-val" id="bench-res-auc">0.00 / 0.00</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">FPR @ 95% TPR</div>
+                        <div class="kpi-val" id="bench-res-fpr95">0.0000</div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="drift-threshold">Threshold Multiplier ($k$)</label>
-                    <div class="slider-container">
-                        <input type="range" id="drift-threshold" min="1.0" max="10.0" step="0.1" value="3.0">
-                        <span class="slider-value" id="threshold-val">3.0</span>
+
+                <!-- Active Comparison Matrix Table -->
+                <div class="table-panel">
+                    <div class="table-top">
+                        <h3 id="table-dataset-header">Dataset Benchmark Results (Current Selection)</h3>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn-sm" onclick="loadBenchmarkTable()">🔄 Refresh Table</button>
+                        </div>
+                    </div>
+                    <div class="table-scroll">
+                        <table class="data-table" id="matrix-table">
+                            <thead>
+                                <tr>
+                                    <th>Model Architecture</th>
+                                    <th>Dataset</th>
+                                    <th>F1 Score</th>
+                                    <th>Precision</th>
+                                    <th>Recall</th>
+                                    <th>AUROC</th>
+                                    <th>PR-AUC</th>
+                                    <th>FPR @ 95% TPR</th>
+                                    <th>Latency</th>
+                                    <th>Throughput</th>
+                                    <th>Peak RSS</th>
+                                </tr>
+                            </thead>
+                            <tbody id="matrix-table-body">
+                                <tr>
+                                    <td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                                        Loading benchmark runs...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
-
-            <div class="action-buttons">
-                <button class="btn btn-primary" id="btn-start" disabled>Start Ingest</button>
-                <button class="btn btn-danger" id="btn-stop" disabled>Stop</button>
-            </div>
-        </aside>
-
-        <!-- Main Dashboard View -->
-        <section class="dashboard-view">
-            <!-- Metrics Cards -->
-            <div class="kpi-grid">
-                <div class="kpi-card">
-                    <div class="kpi-label">Processed Flows</div>
-                    <div class="kpi-value" id="kpi-processed">0</div>
-                    <div class="kpi-subtext" id="kpi-progress">0% of target</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Average Latency</div>
-                    <div class="kpi-value" id="kpi-latency">0.00 ms</div>
-                    <div class="kpi-subtext" id="kpi-jitter">Jitter: 0.00 ms</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Drift Anomalies</div>
-                    <div class="kpi-value warning-text" id="kpi-anomalies">0</div>
-                    <div class="kpi-subtext" id="kpi-rate">Drift Rate: 0.0%</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">System Throughput</div>
-                    <div class="kpi-value info-text" id="kpi-throughput">0.0 /s</div>
-                    <div class="kpi-subtext">SIMD-accelerated</div>
-                </div>
-            </div>
-
-            <!-- Charts Section -->
-            <div class="charts-grid">
-                <div class="chart-card large">
-                    <h3>Continuous Anomaly Score vs. Calibrated Threshold</h3>
-                    <div class="chart-container">
-                        <canvas id="scoreChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h3>Classification Latency Trend (ms)</h3>
-                    <div class="chart-container">
-                        <canvas id="latencyChart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <h3>Threat Categories (CEF Audited)</h3>
-                    <div class="chart-container">
-                        <canvas id="threatChart"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Live Terminal Alerts Console -->
-            <div class="terminal-card">
-                <div class="terminal-header">
-                    <span class="terminal-title">🚨 Live SIEM/SOAR CEF Alerts Console</span>
-                    <button class="btn-clear" id="btn-clear-terminal">Clear Console</button>
-                </div>
-                <div class="terminal-body" id="alerts-console">
-                    <div class="console-line system-line">[SYSTEM] Waiting for CSV ingestion to start...</div>
-                </div>
-            </div>
-        </section>
+        </div>
     </main>
 
-    <script src="app.js"></script>
-</body>
+    <!-- Inline Self-Contained JavaScript -->
+    <script>
+        // State
+        let eventSource = null;
+        let scoreChart = null;
+        let latencyChart = null;
+        let threatChart = null;
+        let allBenchmarkRuns = [];
+        let threatData = { 'Normal': 0 };
 
+        function switchTab(tab) {
+            const tabLiveBtn = document.getElementById('tab-live-btn');
+            const tabBenchBtn = document.getElementById('tab-bench-btn');
+            const viewLive = document.getElementById('view-live');
+            const viewBench = document.getElementById('view-benchmark');
+
+            if (tab === 'live') {
+                tabLiveBtn.classList.add('active');
+                tabBenchBtn.classList.remove('active');
+                viewLive.style.display = 'flex';
+                viewBench.style.display = 'none';
+            } else {
+                tabLiveBtn.classList.remove('active');
+                tabBenchBtn.classList.add('active');
+                viewLive.style.display = 'none';
+                viewBench.style.display = 'flex';
+                loadBenchmarkTable();
+            }
+        }
+
+        function triggerFileInput() {
+            const uploader = document.getElementById('file-uploader');
+            if (uploader) {
+                uploader.click();
+            }
+        }
+
+        async function uploadCSVFile(file) {
+            if (!file) return;
+            const statusIndicator = document.getElementById('upload-status-indicator');
+            const datasetSelect = document.getElementById('dataset-select');
+
+            if (statusIndicator) {
+                statusIndicator.textContent = `Uploading ${file.name}...`;
+                statusIndicator.style.color = '#3b82f6';
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    if (statusIndicator) {
+                        statusIndicator.textContent = `✅ Ready: ${file.name} (${Math.round(file.size/1024)} KB)`;
+                        statusIndicator.style.color = '#10b981';
+                    }
+                    if (datasetSelect) {
+                        datasetSelect.value = 'custom';
+                    }
+                    appendConsole(`[SYSTEM] Uploaded '${file.name}' (${data.size} bytes). Ready to start.`, 'system');
+                } else {
+                    if (statusIndicator) {
+                        statusIndicator.textContent = `❌ Error: ${data.message}`;
+                        statusIndicator.style.color = '#ef4444';
+                    }
+                    appendConsole(`[ERROR] Upload failed: ${data.message}`, 'alert');
+                }
+            } catch (err) {
+                if (statusIndicator) {
+                    statusIndicator.textContent = `❌ Upload failed: ${err.message}`;
+                    statusIndicator.style.color = '#ef4444';
+                }
+            }
+        }
+
+        function appendConsole(text, type = 'info') {
+            const consoleElem = document.getElementById('console-stream');
+            if (!consoleElem) return;
+            const entry = document.createElement('div');
+            entry.className = `log-${type}`;
+            entry.textContent = text;
+            consoleElem.appendChild(entry);
+            consoleElem.scrollTop = consoleElem.scrollHeight;
+        }
+
+        function clearConsoleLog() {
+            const consoleElem = document.getElementById('console-stream');
+            if (consoleElem) consoleElem.innerHTML = '';
+        }
+
+        function initCharts() {
+            const ctxScore = document.getElementById('scoreChart')?.getContext('2d');
+            if (ctxScore) {
+                scoreChart = new Chart(ctxScore, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: 'Drift Score',
+                                data: [],
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                borderWidth: 1.8,
+                                pointRadius: 0,
+                                tension: 0.1,
+                                fill: true
+                            },
+                            {
+                                label: 'Threshold',
+                                data: [],
+                                borderColor: '#ef4444',
+                                borderWidth: 1.5,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                                tension: 0
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        scales: {
+                            x: { display: false },
+                            y: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8', font: { size: 10 } } }
+                        },
+                        plugins: {
+                            legend: { position: 'top', labels: { color: '#94a3b8', boxWidth: 10, font: { size: 10 } } }
+                        }
+                    }
+                });
+            }
+
+            const ctxLat = document.getElementById('latencyChart')?.getContext('2d');
+            if (ctxLat) {
+                latencyChart = new Chart(ctxLat, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Latency (ms)',
+                            data: [],
+                            borderColor: '#10b981',
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        scales: {
+                            x: { display: false },
+                            y: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8', font: { size: 10 } } }
+                        },
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            }
+
+            const ctxThreat = document.getElementById('threatChart')?.getContext('2d');
+            if (ctxThreat) {
+                threatChart = new Chart(ctxThreat, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Normal'],
+                        datasets: [{
+                            data: [1],
+                            backgroundColor: ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 8, font: { size: 10 } } }
+                        }
+                    }
+                });
+            }
+        }
+
+        function startStreamTelemetry() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            clearConsoleLog();
+
+            const datasetSelect = document.getElementById('dataset-select');
+            const streamSpeedInput = document.getElementById('stream-speed');
+            const flowLimitInput = document.getElementById('flow-limit');
+            const thresholdKInput = document.getElementById('threshold-k');
+            const btnStart = document.getElementById('btn-start-stream');
+            const btnStop = document.getElementById('btn-stop-stream');
+            const statusText = document.getElementById('status-text');
+
+            const dataset = datasetSelect ? datasetSelect.value : 'UNSW_NB15_testing-set.csv';
+            const speed = streamSpeedInput ? streamSpeedInput.value : 200;
+            const limit = flowLimitInput ? flowLimitInput.value : 3000;
+            const k = thresholdKInput ? thresholdKInput.value : 3.0;
+
+            if (scoreChart) {
+                scoreChart.data.labels = [];
+                scoreChart.data.datasets[0].data = [];
+                scoreChart.data.datasets[1].data = [];
+                scoreChart.update();
+            }
+
+            if (latencyChart) {
+                latencyChart.data.labels = [];
+                latencyChart.data.datasets[0].data = [];
+                latencyChart.update();
+            }
+
+            threatData = { 'Normal': 0 };
+            if (threatChart) {
+                threatChart.data.labels = ['Normal'];
+                threatChart.data.datasets[0].data = [0];
+                threatChart.update();
+            }
+
+            if (btnStart) btnStart.disabled = true;
+            if (btnStop) btnStop.disabled = false;
+            if (statusText) statusText.textContent = 'Streaming Telemetry...';
+            const dot = document.getElementById('system-status-indicator')?.querySelector('.status-dot');
+            if (dot) dot.className = 'status-dot yellow';
+
+            appendConsole(`[SYSTEM] Initializing stream: dataset=${dataset}, speed=${speed} flows/s, k=${k}`, 'system');
+
+            const url = `/api/stream?dataset_name=${encodeURIComponent(dataset)}&speed=${speed}&limit=${limit}&threshold_k=${k}`;
+            eventSource = new EventSource(url);
+
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'system') {
+                    appendConsole(`[SYSTEM] ${data.message}`, 'system');
+                } else if (data.type === 'alert') {
+                    appendConsole(`[ALERT] ${data.text}`, 'alert');
+                } else if (data.type === 'progress') {
+                    const kpiProcessed = document.getElementById('kpi-processed');
+                    const kpiProcessedSub = document.getElementById('kpi-processed-sub');
+                    const kpiFlowCounts = document.getElementById('kpi-flow-counts');
+                    const kpiFlowCountsSub = document.getElementById('kpi-flow-counts-sub');
+                    const kpiAnomalies = document.getElementById('kpi-anomalies');
+                    const kpiAnomalyRate = document.getElementById('kpi-anomaly-rate');
+                    const kpiLatency = document.getElementById('kpi-latency');
+                    const kpiThroughput = document.getElementById('kpi-throughput');
+
+                    if (kpiProcessed) kpiProcessed.textContent = data.processed;
+                    if (kpiProcessedSub) kpiProcessedSub.textContent = `Flow #${data.index} of ${limit}`;
+                    
+                    const benignCount = data.processed - data.anomalies;
+                    if (kpiFlowCounts) kpiFlowCounts.textContent = `${benignCount} / ${data.anomalies}`;
+                    if (kpiFlowCountsSub) kpiFlowCountsSub.textContent = `Normal: ${benignCount} | Anomaly: ${data.anomalies}`;
+
+                    if (kpiAnomalies) kpiAnomalies.textContent = data.anomalies;
+                    if (kpiAnomalyRate) kpiAnomalyRate.textContent = `Drift Rate: ${((data.anomalies / data.processed)*100).toFixed(1)}%`;
+                    if (kpiLatency) kpiLatency.textContent = `${Number(data.latency_ms).toFixed(2)} ms`;
+                    if (kpiThroughput) kpiThroughput.textContent = `${Math.round(data.throughput)} flows/s`;
+
+                    if (scoreChart) {
+                        scoreChart.data.labels.push(data.index);
+                        scoreChart.data.datasets[0].data.push(data.score);
+                        scoreChart.data.datasets[1].data.push(data.threshold);
+                        if (scoreChart.data.labels.length > 50) {
+                            scoreChart.data.labels.shift();
+                            scoreChart.data.datasets[0].data.shift();
+                            scoreChart.data.datasets[1].data.shift();
+                        }
+                        scoreChart.update();
+                    }
+
+                    if (latencyChart) {
+                        latencyChart.data.labels.push(data.index);
+                        latencyChart.data.datasets[0].data.push(data.latency_ms);
+                        if (latencyChart.data.labels.length > 50) {
+                            latencyChart.data.labels.shift();
+                            latencyChart.data.datasets[0].data.shift();
+                        }
+                        latencyChart.update();
+                    }
+
+                    const cat = data.threat_category || 'Normal';
+                    threatData[cat] = (threatData[cat] || 0) + 1;
+                    if (threatChart) {
+                        threatChart.data.labels = Object.keys(threatData);
+                        threatChart.data.datasets[0].data = Object.values(threatData);
+                        threatChart.update();
+                    }
+                } else if (data.type === 'complete') {
+                    appendConsole(`[COMPLETE] Finished ingestion: ${data.total_processed} flows processed, ${data.total_anomalies} drift alerts dispatched (Avg Latency: ${Number(data.avg_latency_ms).toFixed(2)} ms).`, 'system');
+                    cleanupStreamUI();
+                } else if (data.type === 'error') {
+                    appendConsole(`[ERROR] ${data.message}`, 'alert');
+                    cleanupStreamUI();
+                }
+            };
+
+            eventSource.onerror = () => {
+                appendConsole('[SYSTEM] Telemetry ingestion completed / ended.', 'info');
+                cleanupStreamUI();
+            };
+        }
+
+        async function stopStreamTelemetry() {
+            try {
+                await fetch('/api/stop', { method: 'POST' });
+                appendConsole('[SYSTEM] Ingestion paused by operator.', 'system');
+            } catch (e) {}
+            cleanupStreamUI();
+        }
+
+        function cleanupStreamUI() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            const btnStart = document.getElementById('btn-start-stream');
+            const btnStop = document.getElementById('btn-stop-stream');
+            const statusText = document.getElementById('status-text');
+            if (btnStart) btnStart.disabled = false;
+            if (btnStop) btnStop.disabled = true;
+            if (statusText) statusText.textContent = 'System Standby';
+            const dot = document.getElementById('system-status-indicator')?.querySelector('.status-dot');
+            if (dot) dot.className = 'status-dot green';
+        }
+
+        async function runBenchmarkEvaluation() {
+            const datasetSelect = document.getElementById('bench-dataset-select');
+            const modelSelect = document.getElementById('bench-model-select');
+            const limitInput = document.getElementById('bench-limit');
+            const evalStatusBox = document.getElementById('eval-status-box');
+            const btnRun = document.getElementById('btn-run-bench');
+            const benchResultCards = document.getElementById('bench-result-cards');
+
+            const dataset = datasetSelect ? datasetSelect.value : 'UNSW_NB15_testing-set.csv';
+            const model = modelSelect ? modelSelect.value : 'hdc-lnn';
+            const limit = limitInput ? limitInput.value : 5000;
+
+            if (evalStatusBox) {
+                evalStatusBox.textContent = `Evaluating ${model} on ${dataset}...`;
+                evalStatusBox.style.color = '#3b82f6';
+            }
+            if (btnRun) btnRun.disabled = true;
+
+            try {
+                const res = await fetch(`/api/evaluate_benchmark?dataset_name=${encodeURIComponent(dataset)}&baseline_model=${encodeURIComponent(model)}&limit=${limit}`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    const m = data.metrics;
+                    if (evalStatusBox) {
+                        evalStatusBox.textContent = `Done: Run ${data.run_id}`;
+                        evalStatusBox.style.color = '#10b981';
+                    }
+
+                    if (benchResultCards) benchResultCards.style.display = 'grid';
+                    document.getElementById('bench-res-f1').textContent = Number(m.f1_score || 0).toFixed(4);
+                    document.getElementById('bench-res-prec-rec').textContent = `${Number(m.precision || 0).toFixed(4)} / ${Number(m.recall || 0).toFixed(4)}`;
+                    document.getElementById('bench-res-auc').textContent = `${Number(m.auroc || 0).toFixed(4)} / ${Number(m.pr_auc || 0).toFixed(4)}`;
+                    document.getElementById('bench-res-fpr95').textContent = Number(m.fpr_at_95_tpr || 0).toFixed(4);
+
+                    loadBenchmarkTable();
+                } else {
+                    if (evalStatusBox) {
+                        evalStatusBox.textContent = `Failed: ${data.message}`;
+                        evalStatusBox.style.color = '#ef4444';
+                    }
+                }
+            } catch (err) {
+                if (evalStatusBox) {
+                    evalStatusBox.textContent = `Error: ${err.message}`;
+                    evalStatusBox.style.color = '#ef4444';
+                }
+            } finally {
+                if (btnRun) btnRun.disabled = false;
+            }
+        }
+
+        async function loadBenchmarkTable() {
+            const matrixTableBody = document.getElementById('matrix-table-body');
+            const datasetSelect = document.getElementById('bench-dataset-select');
+            const tableDatasetHeader = document.getElementById('table-dataset-header');
+            const selectedDataset = datasetSelect ? datasetSelect.value : 'UNSW_NB15_testing-set.csv';
+            
+            if (tableDatasetHeader) {
+                tableDatasetHeader.textContent = `Benchmark Comparison for Dataset: ${selectedDataset}`;
+            }
+
+            if (!matrixTableBody) return;
+            matrixTableBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">Loading empirical benchmark results...</td></tr>';
+            try {
+                const res = await fetch('/api/benchmarks_summary');
+                const data = await res.json();
+                if (data.status === 'success') {
+                    allBenchmarkRuns = data.runs;
+                    renderBenchmarkTable(allBenchmarkRuns, selectedDataset);
+                }
+            } catch (err) {
+                matrixTableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: #ef4444; padding: 20px;">Failed to load benchmark table: ${err.message}</td></tr>`;
+            }
+        }
+
+        function renderBenchmarkTable(runs, targetDataset) {
+            const matrixTableBody = document.getElementById('matrix-table-body');
+            if (!matrixTableBody) return;
+            if (!runs || runs.length === 0) {
+                matrixTableBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">No evaluated benchmarks found. Run an evaluation above.</td></tr>';
+                return;
+            }
+
+            // Extract target stem name (e.g. UNSW_NB15_testing-set from UNSW_NB15_testing-set.csv)
+            let stem = targetDataset.replace('.csv', '').toLowerCase();
+            let filtered = runs.filter(r => r.dataset.toLowerCase().includes(stem) || stem.includes(r.dataset.toLowerCase()));
+
+            if (filtered.length === 0) {
+                // If custom or not evaluated yet, show runs matching any current eval
+                filtered = runs.slice(0, 10);
+            }
+
+            matrixTableBody.innerHTML = filtered.map(r => {
+                const isOurs = r.baseline.includes('hdc-lnn');
+                const f1 = Number(r.f1_score).toFixed(4);
+                let badgeClass = 'metric-bad';
+                if (r.f1_score >= 0.85) badgeClass = 'metric-good';
+                else if (r.f1_score >= 0.65) badgeClass = 'metric-avg';
+
+                return `
+                    <tr class="${isOurs ? 'highlight' : ''}">
+                        <td><strong>${r.baseline.toUpperCase()}</strong></td>
+                        <td>${r.dataset}</td>
+                        <td><span class="metric-badge ${badgeClass}">${f1}</span></td>
+                        <td>${Number(r.precision).toFixed(4)}</td>
+                        <td>${Number(r.recall).toFixed(4)}</td>
+                        <td>${Number(r.auroc).toFixed(4)}</td>
+                        <td>${Number(r.pr_auc).toFixed(4)}</td>
+                        <td>${Number(r.fpr_at_95_tpr).toFixed(4)}</td>
+                        <td>${Number(r.latency_ms_per_flow).toFixed(2)} ms</td>
+                        <td>${Math.round(r.throughput_flows_sec)} /s</td>
+                        <td>${Math.round(r.peak_rss_mb)} MB</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Initialize on DOM Ready
+        window.addEventListener('DOMContentLoaded', () => {
+            initCharts();
+
+            // Setup Slider labels
+            const speedInput = document.getElementById('stream-speed');
+            const speedDisplay = document.getElementById('speed-display');
+            if (speedInput && speedDisplay) {
+                speedInput.addEventListener('input', (e) => {
+                    speedDisplay.textContent = `${e.target.value} flows/s`;
+                });
+            }
+
+            const kInput = document.getElementById('threshold-k');
+            const kDisplay = document.getElementById('k-display');
+            if (kInput && kDisplay) {
+                kInput.addEventListener('input', (e) => {
+                    kDisplay.textContent = Number(e.target.value).toFixed(1);
+                });
+            }
+
+            // Setup File Input Change
+            const fileInput = document.getElementById('file-uploader');
+            if (fileInput) {
+                fileInput.addEventListener('change', (e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                        uploadCSVFile(e.target.files[0]);
+                    }
+                });
+            }
+
+            // Setup Drag & Drop on the large box
+            const dropZone = document.getElementById('drop-zone-target');
+            if (dropZone) {
+                ['dragenter', 'dragover'].forEach(name => {
+                    dropZone.addEventListener(name, (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        dropZone.classList.add('dragover');
+                    });
+                });
+
+                ['dragleave', 'drop'].forEach(name => {
+                    dropZone.addEventListener(name, (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        dropZone.classList.remove('dragover');
+                    });
+                });
+
+                dropZone.addEventListener('drop', (e) => {
+                    const dt = e.dataTransfer;
+                    if (dt && dt.files && dt.files.length > 0) {
+                        uploadCSVFile(dt.files[0]);
+                    }
+                });
+            }
+        });
+    </script>
+</body>
 </html>

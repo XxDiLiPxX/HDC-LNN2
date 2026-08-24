@@ -43,16 +43,21 @@ class CodebookManager:
             self.key_vectors[key] = torch.randint(0, 2, (self.D,), dtype=torch.int8).float() * 2.0 - 1.0
         return self.key_vectors[key]
 
-    def fit_numerical_ranges(self, train_flows: List[Any], numerical_columns: List[str]):
+    def fit_numerical_ranges(self, train_flows: List[Any], numerical_columns: List[str], use_log_transform: bool = False):
         """Learns the min/max value ranges for continuous columns based on the training split only."""
-        logger.info("Fitting numerical ranges on training split...")
+        logger.info("Fitting numerical ranges on training split (use_log_transform=%s)...", use_log_transform)
+        self.use_log_transform = use_log_transform
         for col in numerical_columns:
-            vals = [flow.numerical_fields[col] for flow in train_flows]
-            if not vals:
+            raw_vals = [flow.numerical_fields[col] for flow in train_flows]
+            if not raw_vals:
                 min_val, max_val = 0.0, 1.0
             else:
-                min_val = float(min(vals))
-                max_val = float(max(vals))
+                if self.use_log_transform:
+                    transformed = [float(torch.log1p(torch.tensor(max(0.0, float(v)))).item()) for v in raw_vals]
+                else:
+                    transformed = [float(v) for v in raw_vals]
+                min_val = float(min(transformed))
+                max_val = float(max(transformed))
             
             # Avoid division by zero if all values are identical
             if min_val == max_val:
@@ -64,6 +69,8 @@ class CodebookManager:
     def get_numerical_vector(self, key: str, val: float) -> torch.Tensor:
         """Maps a numeric value to a level hypervector using fitted ranges."""
         min_val, max_val = self.min_max.get(key, (0.0, 1.0))
+        if getattr(self, "use_log_transform", True):
+            val = float(torch.log1p(torch.tensor(max(0.0, float(val)))).item())
         
         # Min-max normalization clamped to [0, 1]
         if max_val == min_val:

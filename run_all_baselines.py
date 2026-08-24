@@ -75,7 +75,7 @@ def match_config_for_dataset(dataset_path: Path) -> Path:
         cfg = Path("configs/dataset_kdd.yaml")
         if cfg.exists():
             return cfg
-    if "ton" in name_lower or "iot" in name_lower and "botnet" not in name_lower and "unsw" not in name_lower:
+    if "ton" in name_lower or ("iot" in name_lower and "botnet" not in name_lower and "unsw" not in name_lower):
         cfg = Path("configs/dataset_ton_iot.yaml")
         if cfg.exists():
             return cfg
@@ -91,6 +91,26 @@ def match_config_for_dataset(dataset_path: Path) -> Path:
         cfg = Path("configs/dataset_unsw_nb15.yaml")
         if cfg.exists():
             return cfg
+            
+    # Inspect CSV header if file exists to detect dataset schema dynamically
+    if dataset_path.exists():
+        try:
+            with open(dataset_path, "r", encoding="utf-8", errors="ignore") as f:
+                first_line = f.readline().strip()
+                header = first_line.lower()
+                cols = [c.strip() for c in first_line.split(",")]
+                if "src_bytes" in header and "dst_bytes" in header and "count" in header:
+                    return Path("configs/dataset_kdd.yaml")
+                elif len(cols) in (41, 42, 43) and cols[0].isdigit() and cols[1] in ("tcp", "udp", "icmp"):
+                    # Standard headerless KDD/NSL-KDD CSV format
+                    return Path("configs/dataset_kdd.yaml")
+                elif "ts" in header and "conn_state" in header:
+                    return Path("configs/dataset_ton_iot.yaml")
+                elif "sbytes" in header and "dbytes" in header:
+                    return Path("configs/dataset_unsw_nb15.yaml")
+        except Exception:
+            pass
+            
     return Path("configs/dataset_unsw_nb15.yaml")
 
 def generate_dynamic_architectural_analysis(run_ids: List[str], runs_dir: Path = Path("runs")) -> str:

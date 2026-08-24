@@ -1,0 +1,113 @@
+dataset_name: "unsw_nb15_raw49"
+cache_dir: "datasets"
+entity_id_modulo: 254
+label_column: "label"
+sublabel_column: "attack_cat"
+entity_id_column: "srcip"
+
+columns:
+  - srcip
+  - sport
+  - dstip
+  - dsport
+  - proto
+  - state
+  - dur
+  - sbytes
+  - dbytes
+  - sttl
+  - dttl
+  - sloss
+  - dloss
+  - service
+  - sload
+  - dload
+  - spkts
+  - dpkts
+  - swin
+  - dwin
+  - stcpb
+  - dtcpb
+  - smeansz
+  - dmeansz
+  - trans_depth
+  - res_bdy_len
+  - sjit
+  - djit
+  - stime
+  - ltime
+  - sintpkt
+  - dintpkt
+  - tcprtt
+  - synack
+  - ackdat
+  - is_sm_ips_ports
+  - ct_state_ttl
+  - ct_flw_http_mthd
+  - is_ftp_login
+  - ct_ftp_cmd
+  - ct_srv_src
+  - ct_srv_dst
+  - ct_dst_ltm
+  - ct_src_ltm
+  - ct_src_dport_ltm
+  - ct_dst_sport_ltm
+  - ct_dst_src_ltm
+  - attack_cat
+  - label
+
+categorical_columns:
+  - proto
+  - service
+  - state
+  - is_ftp_login
+  - is_sm_ips_ports
+
+numerical_columns:
+  - dur
+  - spkts
+  - dpkts
+  - sbytes
+  - dbytes
+  - sttl
+  - dttl
+  - sload
+  - dload
+  - sloss
+  - dloss
+  - sintpkt
+  - dintpkt
+  - sjit
+  - djit
+  - swin
+  - stcpb
+  - dtcpb
+  - dwin
+  - tcprtt
+  - synack
+  - ackdat
+  - smeansz
+  - dmeansz
+  - trans_depth
+  - res_bdy_len
+  - ct_srv_src
+  - ct_state_ttl
+  - ct_dst_ltm
+  - ct_src_dport_ltm
+  - ct_dst_sport_ltm
+  - ct_dst_src_ltm
+  - ct_ftp_cmd
+  - ct_flw_http_mthd
+  - ct_src_ltm
+  - ct_srv_dst
+
+model:
+  hidden_dim: 64
+  sequence_length: 16
+  epochs: 3
+  lr: 0.001
+  batch_size: 64
+
+divergence:
+  mode: "mahalanobis"
+  calibration_method: "f1_max"
