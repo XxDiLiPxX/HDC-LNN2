@@ -210,14 +210,12 @@ cp .env.example .env
 
 ## Datasets
 
-All 41 benchmark datasets are located in the `datasets/` directory:
-- UNSW-NB15: `UNSW_NB15_testing-set.csv` (15 MB), `UNSW_NB15_training-set.csv` (31 MB), and raw multi-part files `UNSW-NB15_1.csv` through `_4.csv`.
-- KDD and NSL-KDD: `kdd_test.csv`, `kdd_train.csv`, `NSL_KDD_Test.csv`, `NSL_KDD_Train.csv`, `kddcup99.csv`.
-- ToN-IoT: `ton-iot.csv`.
-- Stratosphere IoT-23: `dataset1.csv` through `dataset23.csv`.
-- UNSW 2018 IoT Botnet: `UNSW_2018_IoT_Botnet_Dataset_*.csv`.
+Primary benchmark datasets are included directly in the `datasets/` directory:
+- UNSW-NB15: `UNSW_NB15_testing-set.csv` (15 MB, primary 30,000-flow benchmark).
+- KDD and NSL-KDD: `kdd_test.csv` (3.1 MB, primary KDD evaluation dataset).
+- ToN-IoT: `ton-iot.csv` (IoT network telemetry dataset).
 
-For dataset citations, paper references, and schema mappings, see [`datasets/SOURCES.md`](datasets/SOURCES.md).
+For download links, schema mappings, and citations for extended captures (IoT-23, UNSW Botnet, and multi-part raw flow dumps), see [`datasets/SOURCES.md`](datasets/SOURCES.md).
 
 ---
 
