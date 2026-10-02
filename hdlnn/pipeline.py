@@ -28,7 +28,7 @@ def main():
     parser.add_argument(
         "--baseline", 
         default="hdc-lnn",
-        choices=["hdc-lnn", "lstm", "cnn", "autoencoder", "mamba2", "hdc-only", "lnn-only"],
+        choices=["hdc-lnn", "lstm", "cnn", "autoencoder", "mamba2", "ft-transformer", "saint", "hdc-only", "lnn-only"],
         help="Baseline model configuration to train or evaluate."
     )
     parser.add_argument(

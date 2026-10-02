@@ -188,12 +188,11 @@ def main():
     print("ALL RUNS COMPLETED. SUMMARY TABLE:")
     print("#"*60)
     
-    # Save markdown report to dataset_runs_summary.md
+    # Save markdown report to DATASET_EVALUATION_SUMMARY.md
     report_lines = [
-        "# Final Baseline Model Benchmark Comparison\n",
-        "> [!NOTE]",
-        "> **FULL-SCALE BENCHMARK**: Full-rank normal validation manifold calibration under strict cybersecurity leakage isolation.\n",
-        "## 1. Sequence & Generative Model Detection Performance\n",
+        "# Multi-Dataset Evaluation Summary\n",
+        "> Benchmark results across evaluated network flow datasets under entity-disjoint validation manifold calibration.\n",
+        "## 1. Detection Performance Across Datasets\n",
         "| Model Architecture         | Dataset / Run ID                                 | F1 Score | Precision | Recall | AUROC  | PR-AUC | FPR @ 95% TPR | Latency (ms/flow) | Throughput (flows/s) | Peak RSS (MB) |",
         "|:---------------------------|--------------------------------------------------|----------|-----------|--------|--------|--------|---------------|-------------------|----------------------|--------------:|"
     ]
@@ -216,11 +215,11 @@ def main():
             )
             
     report_content = "\n".join(report_lines)
-    with open("dataset_runs_summary.md", "w") as rf:
+    with open("DATASET_EVALUATION_SUMMARY.md", "w") as rf:
         rf.write(report_content)
         
     print(report_content)
-    print(f"\nReport written to dataset_runs_summary.md")
+    print(f"\nReport written to DATASET_EVALUATION_SUMMARY.md")
 
 if __name__ == "__main__":
     main()

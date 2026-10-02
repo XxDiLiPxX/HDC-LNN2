@@ -1,0 +1,119 @@
+{
+  "dataset": "kdd_test",
+  "validation_separability": [
+    {
+      "Manifold Variant": "Baseline (Empirical cov + 1e-5*I)",
+      "Val AUROC": 0.8700634606317112,
+      "Val PR-AUC": 0.9003316127157963,
+      "Val F1-Max": 0.8158575122091353,
+      "% Att < Norm P95": 47.21900347624565,
+      "FPR @ 90% TPR": 0.33474833232261975,
+      "FPR @ 95% TPR": 0.9035779260157671,
+      "FPR @ 99% TPR": 0.9727107337780473,
+      "Val Calib Thresh": 2.0534610593111715
+    },
+    {
+      "Manifold Variant": "Variant A1 (Ledoit-Wolf Shrinkage=0.007)",
+      "Val AUROC": 0.8635896821487372,
+      "Val PR-AUC": 0.8973068499896186,
+      "Val F1-Max": 0.8218203379780611,
+      "% Att < Norm P95": 47.62456546929316,
+      "FPR @ 90% TPR": 0.33656761673741664,
+      "FPR @ 95% TPR": 0.9211643420254699,
+      "FPR @ 99% TPR": 0.9787750151607034,
+      "Val Calib Thresh": 2.0245885848999023
+    },
+    {
+      "Manifold Variant": "Variant A2 (OAS Shrinkage=0.002)",
+      "Val AUROC": 0.8701586761736985,
+      "Val PR-AUC": 0.9003860190815756,
+      "Val F1-Max": 0.8152866242038217,
+      "% Att < Norm P95": 47.161066048667436,
+      "FPR @ 90% TPR": 0.33474833232261975,
+      "FPR @ 95% TPR": 0.9029714978775015,
+      "FPR @ 99% TPR": 0.9727107337780473,
+      "Val Calib Thresh": 2.0649561882019043
+    },
+    {
+      "Manifold Variant": "Variant B (Standardization + LW Cov)",
+      "Val AUROC": 0.8690997106993459,
+      "Val PR-AUC": 0.9001761361719622,
+      "Val F1-Max": 0.8107502799552072,
+      "% Att < Norm P95": 47.3928157589803,
+      "FPR @ 90% TPR": 0.33474833232261975,
+      "FPR @ 95% TPR": 0.9199514857489387,
+      "FPR @ 99% TPR": 0.9769557307459066,
+      "Val Calib Thresh": 1.9395391941070557
+    }
+  ],
+  "test_evaluation": [
+    {
+      "Manifold Variant": "Baseline (Empirical cov + 1e-5*I)",
+      "Threshold": 2.0534610593111715,
+      "TP": 1399,
+      "FP": 382,
+      "FN": 313,
+      "TN": 1372,
+      "F1": 0.8010306326939594,
+      "Precision": 0.785513756316676,
+      "Recall": 0.8171728971962616,
+      "AUROC": 0.8620452983301187,
+      "PR-AUC": 0.8901373147510168,
+      "FPR@95%TPR": 0.9389965792474344,
+      "Latency (ms)": 0.9739795729948835,
+      "Throughput (f/s)": 1026.7155777457492,
+      "Peak RSS (MB)": 3583.140625
+    },
+    {
+      "Manifold Variant": "Variant A1 (Ledoit-Wolf Shrinkage=0.007)",
+      "Threshold": 2.0245885848999023,
+      "TP": 1369,
+      "FP": 302,
+      "FN": 343,
+      "TN": 1452,
+      "F1": 0.809340821755838,
+      "Precision": 0.8192698982645122,
+      "Recall": 0.7996495327102804,
+      "AUROC": 0.8540359019171133,
+      "PR-AUC": 0.8859240489778051,
+      "FPR@95%TPR": 0.9441277080957811,
+      "Latency (ms)": 0.9739795729948835,
+      "Throughput (f/s)": 1026.7155777457492,
+      "Peak RSS (MB)": 3583.140625
+    },
+    {
+      "Manifold Variant": "Variant A2 (OAS Shrinkage=0.002)",
+      "Threshold": 2.0649561882019043,
+      "TP": 1385,
+      "FP": 364,
+      "FN": 327,
+      "TN": 1390,
+      "F1": 0.8003467206009823,
+      "Precision": 0.7918810748999429,
+      "Recall": 0.8089953271028038,
+      "AUROC": 0.8621235573695372,
+      "PR-AUC": 0.8901840745768105,
+      "FPR@95%TPR": 0.9384264538198404,
+      "Latency (ms)": 0.9739795729948835,
+      "Throughput (f/s)": 1026.7155777457492,
+      "Peak RSS (MB)": 3583.140625
+    },
+    {
+      "Manifold Variant": "Variant B (Standardization + LW Cov)",
+      "Threshold": 1.9395391941070557,
+      "TP": 1426,
+      "FP": 453,
+      "FN": 286,
+      "TN": 1301,
+      "F1": 0.7942077415761626,
+      "Precision": 0.7589143161255987,
+      "Recall": 0.8329439252336449,
+      "AUROC": 0.8591713599889171,
+      "PR-AUC": 0.8893575919948261,
+      "FPR@95%TPR": 0.9412770809578107,
+      "Latency (ms)": 0.9739795729948835,
+      "Throughput (f/s)": 1026.7155777457492,
+      "Peak RSS (MB)": 3583.140625
+    }
+  ]
+}

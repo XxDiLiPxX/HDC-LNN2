@@ -20,6 +20,10 @@ data:
 divergence:
   mode: "mahalanobis"
   threshold_k: 3.0
+  # Instantaneous-Temporal Linear Fusion (Production Architecture)
+  use_instantaneous_fusion: true
+  fusion_subspace_dim: -1
+  residual_alpha: 0.0
   # Scores are distances: higher score means more anomalous.
   calibration_method: "f1_max"
   min_precision: 0.95

@@ -210,33 +210,62 @@ class MambaSequenceModel(nn.Module, ISequenceModel):
     def step(self, x: torch.Tensor, h_prev: torch.Tensor, dt: torch.Tensor) -> torch.Tensor:
         """Evaluates continuous state transition for a single time step.
         
+        Uses direct single-step vectorized formulation to avoid PyTorch Conv1d grouped-convolution
+        dispatch overhead while guaranteeing exact mathematical equivalence.
         Returns a composite tensor: [batch_size, hidden_dim + d_inner * d_state]
         where the first hidden_dim slice contains the output feature vector (for next-vector projection)
         and the remaining slice contains the internal SSM recurrent state.
         """
         if x.dim() == 1:
             x = x.unsqueeze(0)
-        x_seq = x.unsqueeze(1)  # [batch_size, 1, input_dim]
-        
+            
         d_inner = self.expand * self.hidden_dim
-        ssm_state_size = d_inner * self.d_state
+        d_state = self.d_state
+        ssm_state_size = d_inner * d_state
+        batch_size = x.size(0)
         
         if h_prev.dim() == 1:
             h_prev = h_prev.unsqueeze(0)
             
         if h_prev.size(1) >= ssm_state_size:
-            # Extract internal SSM state from the trailing slice
-            ssm_slice = h_prev[:, -ssm_state_size:]
-            h0 = ssm_slice.view(x.size(0), d_inner, self.d_state)
+            h0 = h_prev[:, -ssm_state_size:].view(batch_size, d_inner, d_state)
         else:
-            h0 = None
+            h0 = torch.zeros((batch_size, d_inner, d_state), device=x.device, dtype=x.dtype)
             
-        x_proj = self.in_proj(x_seq)
-        out, h_last = self.ssm(x_proj, h0=h0)
+        # 1. Project input: [B, D] -> [B, hidden_dim]
+        x_proj = self.in_proj(x)
+        
+        # 2. SSM In-projection: [B, hidden_dim] -> [B, 2 * d_inner]
+        xz = self.ssm.in_proj(x_proj)
+        x_inner, z = xz.chunk(2, dim=-1)
+        
+        # 3. Direct depthwise conv step (evaluating causal tap without Conv1d dispatch)
+        w_tap = self.ssm.conv1d.weight[:, 0, -1]
+        b_conv = self.ssm.conv1d.bias
+        x_conv = F.silu(x_inner * w_tap + b_conv)
+        
+        # 4. Project SSM parameters
+        ssm_params = self.ssm.x_proj(x_conv)
+        dt_param, B_proj, C_proj = torch.split(
+            ssm_params, 
+            [self.ssm.dt_rank, d_state, d_state], 
+            dim=-1
+        )
+        delta = F.softplus(self.ssm.dt_proj(dt_param))
+        A = -torch.exp(self.ssm.A_log)
+        
+        # 5. Continuous state evolution
+        delta_A = torch.exp(delta.unsqueeze(-1) * A.unsqueeze(0))
+        delta_B_u = delta.unsqueeze(-1) * B_proj.unsqueeze(1) * x_conv.unsqueeze(-1)
+        new_h = delta_A * h0 + delta_B_u
+        
+        # 6. Gating and out projection
+        y = (new_h * C_proj.unsqueeze(1)).sum(dim=-1) + x_conv * self.ssm.D
+        y_gated = y * F.silu(z)
+        out_feature = self.ssm.out_proj(y_gated)
         
         # Composite state: [out_features, ssm_state]
-        out_feature = out[:, -1, :]  # [batch_size, hidden_dim]
-        return torch.cat([out_feature, h_last], dim=-1)
+        return torch.cat([out_feature, new_h.reshape(batch_size, -1)], dim=-1)
 
     def predict_next_vector(self, state: torch.Tensor) -> torch.Tensor:
         """Projects hidden state sequence/vector back to hypervector space."""

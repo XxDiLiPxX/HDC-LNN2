@@ -131,7 +131,7 @@ def generate_encoder_separability_table(runs_dir: Path = Path("runs"), dataset_p
         
     return "\n".join(lines)
 
-def print_and_save_comparison_table(runs_dir: Path = Path("runs"), output_file: Path = Path("comparison_table.md")) -> None:
+def print_and_save_comparison_table(runs_dir: Path = Path("runs"), output_file: Path = Path("BENCHMARK_COMPARISON.md")) -> None:
     """Generates the comparison table, prints it to the console, and writes it to a file."""
     table_md = generate_comparison_table(runs_dir)
     enc_table_md = generate_encoder_separability_table()

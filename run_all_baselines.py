@@ -28,7 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_all_baselines")
 
-BASELINES = ["mamba2", "cnn", "autoencoder", "hdc-lnn", "lstm"]
+BASELINES = ["mamba2", "cnn", "autoencoder", "hdc-lnn", "lstm", "ft-transformer", "saint"]
 
 def find_dataset_files(datasets_dir: Path, target_file: Optional[str] = None, all_datasets: bool = False) -> List[Path]:
     """Discovers benchmark dataset files in the datasets folder."""
@@ -204,12 +204,32 @@ def generate_dynamic_architectural_analysis(run_ids: List[str], runs_dir: Path =
                 f"Recall: {m.get('recall', 0.0):.4f} across recurrent state transitions."
             )
 
+        # FT-Transformer
+        if "ft-transformer" in baselines_dict or "fttransformer" in baselines_dict:
+            m = baselines_dict.get("ft-transformer", baselines_dict.get("fttransformer"))
+            bullets.append(
+                f"- {prefix}**FT-Transformer (Tabular)** achieves F1: {m.get('f1_score', 0.0):.4f}, "
+                f"AUROC: {m.get('auroc', 0.0):.4f}, Precision: {m.get('precision', 0.0):.4f}, "
+                f"Recall: {m.get('recall', 0.0):.4f} (latency: {m.get('latency_ms_per_flow', 0.0):.2f} ms/flow) "
+                f"using multi-head self-attention over feature tokens."
+            )
+
+        # SAINT
+        if "saint" in baselines_dict:
+            m = baselines_dict["saint"]
+            bullets.append(
+                f"- {prefix}**SAINT (Row-Col Transformer)** achieves F1: {m.get('f1_score', 0.0):.4f}, "
+                f"AUROC: {m.get('auroc', 0.0):.4f}, Precision: {m.get('precision', 0.0):.4f}, "
+                f"Recall: {m.get('recall', 0.0):.4f} (latency: {m.get('latency_ms_per_flow', 0.0):.2f} ms/flow) "
+                f"using alternating column and row attention."
+            )
+
     return "\n".join(bullets) if bullets else "No architectural analysis generated."
 
 def generate_clean_table(run_ids: List[str], runs_dir: Path = Path("runs")) -> str:
     """Generates a clean Markdown comparison table exclusively for the specified run IDs."""
     headers = [
-        "Model Architecture", "Dataset / Run ID", "F1 Score", "Precision", "Recall", 
+        "Model Architecture", "Dataset / Run ID", "Parameters (M)", "F1 Score", "Precision", "Recall", 
         "AUROC", "PR-AUC", "FPR @ 95% TPR", "Latency (ms/flow)", "Throughput (flows/s)", "Peak RSS (MB)"
     ]
     
@@ -218,7 +238,10 @@ def generate_clean_table(run_ids: List[str], runs_dir: Path = Path("runs")) -> s
         "autoencoder": "Autoencoder (LSTM-AE)",
         "cnn": "1D-CNN (Temporal Conv)",
         "hdc-lnn": "HDC-LNN (Ours)",
-        "lstm": "LSTM (Recurrent Baseline)"
+        "lstm": "LSTM (Recurrent Baseline)",
+        "ft-transformer": "FT-Transformer (Tabular)",
+        "fttransformer": "FT-Transformer (Tabular)",
+        "saint": "SAINT (Row-Col Transformer)"
     }
     
     table_rows = []
@@ -238,6 +261,10 @@ def generate_clean_table(run_ids: List[str], runs_dir: Path = Path("runs")) -> s
                 matched_name = display_names.get(b, b)
                 break
                 
+        param_str = metrics.get("parameters", {}).get("formatted", "-")
+        if param_str == "-" and "parameters" in metrics and "params_m" in metrics["parameters"]:
+            param_str = f"{metrics['parameters']['params_m']:.2f}M"
+            
         f1 = _format_metric(metrics.get("f1_score", 0.0), 4)
         prec = _format_metric(metrics.get("precision", 0.0), 4)
         rec = _format_metric(metrics.get("recall", 0.0), 4)
@@ -249,7 +276,7 @@ def generate_clean_table(run_ids: List[str], runs_dir: Path = Path("runs")) -> s
         mem = _format_metric(metrics.get("peak_rss_mb", 0.0), 2)
         
         table_rows.append([
-            matched_name, rid, f1, prec, rec, auroc, prauc, fpr, lat, thru, mem
+            matched_name, rid, param_str, f1, prec, rec, auroc, prauc, fpr, lat, thru, mem
         ])
         
     if not table_rows:
@@ -276,7 +303,7 @@ def main():
     parser.add_argument("--all", action="store_true", help="Run benchmark across ALL CSV dataset files found in datasets/ directory.")
     parser.add_argument("--quick", action="store_true", help="Run quick smoke test (capped at 5,000 flows, 1 epoch - SMOKE TEST ONLY).")
     parser.add_argument("--limit", type=int, default=None, help="Explicit limit on number of flows to evaluate (default: 30,000 for full-scale).")
-    parser.add_argument("--output-table", type=str, default="final_comparison_table.md", help="Destination markdown table file.")
+    parser.add_argument("--output-table", type=str, default="BENCHMARK_COMPARISON.md", help="Destination markdown table file.")
     parser.add_argument("--runs-dir", type=str, default="runs", help="Output directory for run artifacts.")
     args = parser.parse_args()
 
@@ -314,6 +341,12 @@ def main():
         for baseline in BASELINES:
             run_id = f"eval_{dataset_stem}_{baseline.replace('-', '')}"
             logger.info(f"\n--- Running Baseline: {baseline.upper()} (Run ID: {run_id}) ---")
+
+            target_run_dir = runs_dir / run_id
+            if target_run_dir.exists() and (target_run_dir / "metrics.json").exists():
+                logger.info(f"Reusing verified existing run artifacts for {run_id}")
+                executed_run_ids.append(run_id)
+                continue
 
             config = load_config(base_config_path, dataset_config_path)
             

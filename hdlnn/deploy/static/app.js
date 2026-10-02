@@ -4,7 +4,7 @@ let scoreChart = null;
 let latencyChart = null;
 let threatChart = null;
 let allBenchmarkRuns = [];
-let threatData = { 'Normal': 0 };
+let scoreDistribution = { low: 0, moderate: 0, elevated: 0, critical: 0 };
 
 // DOM Elements
 const tabLiveBtn = document.getElementById('tab-live-btn');
@@ -61,6 +61,9 @@ function switchTab(tab) {
         tabBenchBtn.classList.add('active');
         viewLive.style.display = 'none';
         viewBench.style.display = 'flex';
+        if (datasetSelect && benchDatasetSelect) {
+            benchDatasetSelect.value = datasetSelect.value;
+        }
         loadBenchmarkTable();
     }
 }
@@ -256,20 +259,42 @@ function initCharts() {
         threatChart = new Chart(ctxThreat, {
             type: 'doughnut',
             data: {
-                labels: ['Normal'],
+                labels: ['Low (0-2)', 'Moderate (2-5)', 'Elevated (5-10)', 'Critical (10+)'],
                 datasets: [{
-                    data: [1],
-                    backgroundColor: ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'],
+                    data: [0, 0, 0, 0],
+                    backgroundColor: ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'],
                     borderWidth: 0
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                cutout: '68%',
                 plugins: {
                     legend: {
                         position: 'bottom',
-                        labels: { color: '#94a3b8', boxWidth: 8, font: { size: 10 } }
+                        labels: {
+                            color: '#ffffff',
+                            boxWidth: 8,
+                            font: { size: 10, weight: '600' },
+                            generateLabels: function(chart) {
+                                const data = chart.data;
+                                if (data.labels.length && data.datasets.length) {
+                                    return data.labels.map((label, i) => {
+                                        const val = data.datasets[0].data[i] || 0;
+                                        return {
+                                            text: `${label}: ${val}`,
+                                            fillStyle: data.datasets[0].backgroundColor[i],
+                                            fontColor: '#ffffff',
+                                            strokeStyle: data.datasets[0].backgroundColor[i],
+                                            lineWidth: 0,
+                                            index: i
+                                        };
+                                    });
+                                }
+                                return [];
+                            }
+                        }
                     }
                 }
             }
@@ -310,10 +335,9 @@ function startStreamTelemetry() {
         latencyChart.update();
     }
 
-    threatData = { 'Normal': 0 };
+    scoreDistribution = { low: 0, moderate: 0, elevated: 0, critical: 0 };
     if (threatChart) {
-        threatChart.data.labels = ['Normal'];
-        threatChart.data.datasets[0].data = [0];
+        threatChart.data.datasets[0].data = [0, 0, 0, 0];
         threatChart.update();
     }
 
@@ -323,7 +347,7 @@ function startStreamTelemetry() {
     const dot = document.getElementById('system-status-indicator')?.querySelector('.status-dot');
     if (dot) dot.className = 'status-dot yellow';
 
-    appendConsole(`[SYSTEM] Starting live telemetry: dataset=${dataset}, speed=${speed} flows/s, k=${k}`, 'system');
+    appendConsole(`[SYSTEM] Starting live telemetry: dataset=${dataset}, speed=${speed} flows/s, sensitivity(k)=${k}`, 'system');
 
     const url = `/api/stream?dataset_name=${encodeURIComponent(dataset)}&speed=${speed}&limit=${limit}&threshold_k=${k}`;
     eventSource = new EventSource(url);
@@ -367,16 +391,31 @@ function startStreamTelemetry() {
                     latencyChart.update();
                 }
 
-                const cat = data.threat_category || 'Normal';
-                threatData[cat] = (threatData[cat] || 0) + 1;
+                const rawScore = Number(data.score || 0);
+                if (rawScore < 2.0) {
+                    scoreDistribution.low = (scoreDistribution.low || 0) + 1;
+                } else if (rawScore < 5.0) {
+                    scoreDistribution.moderate = (scoreDistribution.moderate || 0) + 1;
+                } else if (rawScore < 10.0) {
+                    scoreDistribution.elevated = (scoreDistribution.elevated || 0) + 1;
+                } else {
+                    scoreDistribution.critical = (scoreDistribution.critical || 0) + 1;
+                }
+
                 if (threatChart) {
-                    threatChart.data.labels = Object.keys(threatData);
-                    threatChart.data.datasets[0].data = Object.values(threatData);
+                    threatChart.data.datasets[0].data = [
+                        scoreDistribution.low,
+                        scoreDistribution.moderate,
+                        scoreDistribution.elevated,
+                        scoreDistribution.critical
+                    ];
                     threatChart.update();
                 }
             } else if (data.type === 'complete') {
                 appendConsole(`[COMPLETE] Finished: ${data.total_processed} flows, F1=${Number(data.f1_score).toFixed(4)}, P=${Number(data.precision).toFixed(4)}, R=${Number(data.recall).toFixed(4)}`, 'system');
+                appendConsole(`[BENCHMARK] Automatically evaluating all baseline models on '${dataset}'...`, 'system');
                 cleanupStreamUI();
+                runAllModelsEvaluation(dataset);
             } else if (data.type === 'error') {
                 appendConsole(`[ERROR] ${data.message}`, 'alert');
                 cleanupStreamUI();
@@ -385,8 +424,35 @@ function startStreamTelemetry() {
 
         eventSource.onerror = () => {
             appendConsole('[SYSTEM] SSE stream ended.', 'info');
+            appendConsole(`[BENCHMARK] Automatically evaluating all baseline models on '${dataset}'...`, 'system');
             cleanupStreamUI();
+            runAllModelsEvaluation(dataset);
         };
+}
+
+async function runAllModelsEvaluation(targetDataset) {
+    const activeDataset = targetDataset || (datasetSelect ? datasetSelect.value : 'UNSW_NB15_testing-set.csv');
+    const evalStatusBox = document.getElementById('eval-status-box');
+    if (evalStatusBox) {
+        evalStatusBox.textContent = `Evaluating all models for ${activeDataset}...`;
+        evalStatusBox.style.color = '#3b82f6';
+    }
+    try {
+        const res = await fetch(`/api/evaluate_all_models?dataset_name=${encodeURIComponent(activeDataset)}&limit=3000`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            if (evalStatusBox) {
+                evalStatusBox.textContent = `Completed ${data.total_models} models on ${data.dataset} ✅`;
+                evalStatusBox.style.color = '#10b981';
+            }
+            appendConsole(`[BENCHMARK] Evaluated ${data.total_models} models on '${data.dataset}'. Benchmark table updated.`, 'system');
+            loadBenchmarkTable();
+        }
+    } catch (err) {
+        console.error("Multi-model eval error:", err);
+    }
 }
 
 async function stopStreamTelemetry() {
@@ -458,43 +524,89 @@ if (btnRunBench) {
 // ================= BENCHMARK MATRIX TABLE =================
 async function loadBenchmarkTable() {
     if (!matrixTableBody) return;
+    const selectedDataset = benchDatasetSelect ? benchDatasetSelect.value : (datasetSelect ? datasetSelect.value : 'UNSW_NB15_testing-set.csv');
+    const tableDatasetHeader = document.getElementById('table-dataset-header');
+    if (tableDatasetHeader) {
+        tableDatasetHeader.textContent = `Benchmark Comparison for Dataset: ${selectedDataset}`;
+    }
+
     matrixTableBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">Loading empirical benchmark results...</td></tr>';
     try {
         const res = await fetch('/api/benchmarks_summary');
         const data = await res.json();
         if (data.status === 'success') {
             allBenchmarkRuns = data.runs;
-            renderBenchmarkTable(allBenchmarkRuns);
+            renderBenchmarkTable(allBenchmarkRuns, selectedDataset);
         }
     } catch (err) {
         matrixTableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: #ef4444; padding: 20px;">Failed to load benchmark table: ${err.message}</td></tr>`;
     }
 }
 
-function renderBenchmarkTable(runs) {
+function renderBenchmarkTable(runs, targetDataset) {
     if (!matrixTableBody) return;
     if (!runs || runs.length === 0) {
         matrixTableBody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">No evaluated benchmarks found. Run an evaluation above.</td></tr>';
         return;
     }
 
-    const query = (tableSearch?.value || '').toLowerCase();
-    const filtered = runs.filter(r => 
-        r.dataset.toLowerCase().includes(query) || 
-        r.baseline.toLowerCase().includes(query) ||
-        r.run_id.toLowerCase().includes(query)
-    );
+    const currentDataset = targetDataset || (benchDatasetSelect ? benchDatasetSelect.value : (datasetSelect ? datasetSelect.value : 'UNSW_NB15_testing-set.csv'));
+    let stem = currentDataset.replace('.csv', '').toLowerCase();
+    
+    // Map custom dataset aliases to 'uploaded_dataset'
+    const isCustom = stem === 'custom' || stem.includes('uploaded');
+
+    // Strict match on active dataset stem
+    let filtered = runs.filter(r => {
+        const rStem = (r.dataset || '').toLowerCase();
+        if (isCustom && (rStem.includes('uploaded') || rStem.includes('custom'))) {
+            return true;
+        }
+        return rStem === stem || rStem.replace(/[-_ ]/g, '') === stem.replace(/[-_ ]/g, '');
+    });
+
+    if (filtered.length === 0) {
+        filtered = runs.filter(r => {
+            const rStem = (r.dataset || '').toLowerCase();
+            return rStem.includes(stem) || stem.includes(rStem);
+        });
+    }
+
+    if (filtered.length === 0) {
+        matrixTableBody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 20px;">No baseline runs found for <code>${currentDataset}</code>. Running multi-model evaluation harness now...</td></tr>`;
+        runAllModelsEvaluation(currentDataset);
+        return;
+    }
+
+    filtered.sort((a, b) => {
+        if (a.baseline === 'mamba2') return -1;
+        if (b.baseline === 'mamba2') return 1;
+        if (a.baseline.includes('hdc-lnn')) return -1;
+        if (b.baseline.includes('hdc-lnn')) return 1;
+        return b.f1_score - a.f1_score;
+    });
 
     matrixTableBody.innerHTML = filtered.map(r => {
-        const isOurs = r.baseline.includes('hdc-lnn');
+        const isMamba = r.baseline.toLowerCase().includes('mamba');
+        const isOurs = r.baseline.toLowerCase().includes('hdc-lnn');
         const f1 = Number(r.f1_score).toFixed(4);
         let badgeClass = 'metric-bad';
         if (r.f1_score >= 0.85) badgeClass = 'metric-good';
         else if (r.f1_score >= 0.65) badgeClass = 'metric-avg';
 
+        let rowClass = '';
+        let baselineTag = r.baseline.toUpperCase();
+        if (isMamba) {
+            rowClass = 'mamba-highlight';
+            baselineTag = '⚡ MAMBA-2 (SSM)';
+        } else if (isOurs) {
+            rowClass = 'highlight';
+            baselineTag = '⭐ HDC-LNN (OURS)';
+        }
+
         return `
-            <tr class="${isOurs ? 'highlight' : ''}">
-                <td><strong>${r.baseline.toUpperCase()}</strong></td>
+            <tr class="${rowClass}">
+                <td><strong>${baselineTag}</strong></td>
                 <td>${r.dataset}</td>
                 <td><span class="metric-badge ${badgeClass}">${f1}</span></td>
                 <td>${Number(r.precision).toFixed(4)}</td>

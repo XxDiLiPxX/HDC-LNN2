@@ -623,6 +623,12 @@ html, body {
     font-weight: 600;
 }
 
+.data-table tr.mamba-highlight td {
+    background: rgba(245, 158, 11, 0.09);
+    font-weight: 600;
+    color: #fbbf24;
+}
+
 .text-center { text-align: center; }
 .metric-badge {
     padding: 2px 6px;

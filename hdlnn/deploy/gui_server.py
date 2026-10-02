@@ -1,5 +1,12 @@
 import os
 import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import csv
 import json
 import time
@@ -8,7 +15,6 @@ import asyncio
 import torch
 import uvicorn
 import numpy as np
-from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, Request, Query, UploadFile, File
@@ -77,6 +83,7 @@ async def get_benchmarks_summary():
     """Loads all evaluated benchmark runs and returns them for comparison."""
     files = find_dataset_files(Path("datasets"), all_datasets=True)
     rows = []
+    # Check pre-computed runs
     for f in files:
         stem = f.stem
         for baseline in BASELINES:
@@ -103,6 +110,37 @@ async def get_benchmarks_summary():
                     })
                 except Exception:
                     pass
+
+    # Also load any dynamically evaluated gui_* runs
+    if RUNS_DIR.exists():
+        for run_dir in RUNS_DIR.glob("gui_*"):
+            metrics_file = run_dir / "metrics.json"
+            if metrics_file.exists():
+                try:
+                    with open(metrics_file, "r") as mf:
+                        m = json.load(mf)
+                    # Extract dataset and baseline
+                    parts = run_dir.name[4:].rsplit("_", 1)
+                    d_stem = parts[0] if len(parts) > 1 else run_dir.name[4:]
+                    b_name = parts[1] if len(parts) > 1 else "hdc-lnn"
+                    if b_name == "hdclnn": b_name = "hdc-lnn"
+                    rows.append({
+                        "dataset": d_stem,
+                        "baseline": b_name,
+                        "run_id": run_dir.name,
+                        "f1_score": m.get("f1_score", 0.0),
+                        "precision": m.get("precision", 0.0),
+                        "recall": m.get("recall", 0.0),
+                        "auroc": m.get("auroc", 0.0),
+                        "pr_auc": m.get("pr_auc", 0.0),
+                        "fpr_at_95_tpr": m.get("fpr_at_95_tpr", 0.0),
+                        "latency_ms_per_flow": m.get("latency_ms_per_flow", 0.0),
+                        "throughput_flows_sec": m.get("throughput_flows_sec", 0.0),
+                        "peak_rss_mb": m.get("peak_rss_mb", 0.0)
+                    })
+                except Exception:
+                    pass
+
     return {"status": "success", "total_runs": len(rows), "runs": rows}
 
 @app.post("/api/upload")
@@ -146,6 +184,87 @@ async def handle_file_upload(request: Request):
         logger.error(f"Failed to process upload: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
 
+def sanitize_metrics(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Sanitizes float metrics to prevent JSON serialization errors with NaN or Inf."""
+    import math
+    clean = {}
+    for k, v in m.items():
+        if isinstance(v, float):
+            if math.isnan(v) or math.isinf(v):
+                clean[k] = 0.0
+            else:
+                clean[k] = v
+        else:
+            clean[k] = v
+    return clean
+
+@app.post("/api/evaluate_all_models")
+async def evaluate_all_models_endpoint(
+    dataset_name: str = Query("UNSW_NB15_testing-set.csv"),
+    limit: int = Query(3000, ge=100, le=20000)
+):
+    """Executes the benchmark harness for ALL baseline models for the specified dataset."""
+    global uploaded_custom_path, uploaded_custom_name
+    try:
+        base_cfg = Path("configs/base.yaml")
+        if dataset_name == "custom" and uploaded_custom_path and uploaded_custom_path.exists():
+            dataset_path = uploaded_custom_path
+            cfg_path = match_config_for_dataset(Path(uploaded_custom_name))
+        else:
+            dataset_path = Path("datasets") / dataset_name
+            if not dataset_path.exists():
+                dataset_path = next(Path("datasets").glob("*.csv"))
+            cfg_path = match_config_for_dataset(dataset_path)
+            
+        config = load_config(base_cfg, cfg_path)
+        evaluated_runs = []
+        
+        for baseline in BASELINES:
+            b_clean = baseline.replace("-", "")
+            run_id = f"gui_{dataset_path.stem}_{b_clean}"
+            run_dir = RUNS_DIR / run_id
+            if run_dir.exists():
+                import shutil
+                shutil.rmtree(run_dir, ignore_errors=True)
+            
+            logger.info(f"Auto-evaluating baseline {baseline} on {dataset_path.name} (limit={limit})...")
+            try:
+                metrics = run_experiment(
+                    config=config,
+                    baseline_name=baseline,
+                    run_id=run_id,
+                    output_dir=RUNS_DIR,
+                    limit=limit,
+                    source_file=str(dataset_path)
+                )
+                m = sanitize_metrics(metrics)
+                evaluated_runs.append({
+                    "dataset": dataset_path.stem,
+                    "baseline": baseline,
+                    "run_id": run_id,
+                    "f1_score": m.get("f1_score", 0.0),
+                    "precision": m.get("precision", 0.0),
+                    "recall": m.get("recall", 0.0),
+                    "auroc": m.get("auroc", 0.0),
+                    "pr_auc": m.get("pr_auc", 0.0),
+                    "fpr_at_95_tpr": m.get("fpr_at_95_tpr", 0.0),
+                    "latency_ms_per_flow": m.get("latency_ms_per_flow", 0.0),
+                    "throughput_flows_sec": m.get("throughput_flows_sec", 0.0),
+                    "peak_rss_mb": m.get("peak_rss_mb", 0.0)
+                })
+            except Exception as model_err:
+                logger.error(f"Failed baseline {baseline}: {model_err}")
+
+        return {
+            "status": "success",
+            "dataset": dataset_path.stem,
+            "total_models": len(evaluated_runs),
+            "runs": evaluated_runs
+        }
+    except Exception as e:
+        logger.error(f"Multi-model evaluation failed: {e}", exc_info=True)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 @app.post("/api/evaluate_benchmark")
 async def evaluate_benchmark_endpoint(
     dataset_name: str = Query("UNSW_NB15_testing-set.csv"),
@@ -166,7 +285,12 @@ async def evaluate_benchmark_endpoint(
             cfg_path = match_config_for_dataset(dataset_path)
             
         config = load_config(base_cfg, cfg_path)
-        run_id = f"gui_{dataset_path.stem}_{baseline_model.replace('-', '')}"
+        b_clean = baseline_model.replace("-", "")
+        run_id = f"gui_{dataset_path.stem}_{b_clean}"
+        run_dir = RUNS_DIR / run_id
+        if run_dir.exists():
+            import shutil
+            shutil.rmtree(run_dir, ignore_errors=True)
         
         logger.info(f"Running on-demand benchmark evaluation: dataset={dataset_path.name}, baseline={baseline_model}, limit={limit}")
         metrics = run_experiment(
@@ -182,7 +306,7 @@ async def evaluate_benchmark_endpoint(
             "dataset": dataset_path.stem,
             "baseline": baseline_model,
             "run_id": run_id,
-            "metrics": metrics
+            "metrics": sanitize_metrics(metrics)
         }
     except Exception as e:
         logger.error(f"Evaluation failed: {e}", exc_info=True)
@@ -200,7 +324,7 @@ async def stream_live_telemetry(
     baseline_model: str = Query("hdc-lnn"),
     speed: int = Query(200, ge=10, le=10000),
     limit: int = Query(2000, ge=50, le=20000),
-    threshold_k: float = Query(3.0, ge=1.0, le=10.0)
+    threshold_k: float = Query(3.0, ge=0.5, le=10.0)
 ):
     """Streams live step-by-step telemetry decisions via Server-Sent Events (SSE)."""
     global stop_stream_flag, uploaded_custom_path, uploaded_custom_name

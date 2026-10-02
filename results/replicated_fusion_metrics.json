@@ -1,0 +1,49 @@
+{
+    "frozen_baseline": {
+        "mean_f1": 0.9355314345219901,
+        "std_f1": 0.00884337418735071,
+        "mean_precision": 0.9270176703650893,
+        "std_precision": 0.01848288658897535,
+        "mean_recall": 0.9447453755586754,
+        "std_recall": 0.005368452157483261,
+        "mean_auroc": 0.9760147342759791,
+        "std_auroc": 0.006031759306309341,
+        "mean_fpr95": 0.11729544548428296,
+        "std_fpr95": 0.033717280121589414,
+        "mean_latency_us": 60.13880629538153,
+        "mean_throughput": 16630.336144650275,
+        "peak_rss_mb": 2159.65625
+    },
+    "linear_fusion": {
+        "mean_f1": 0.9325900966247052,
+        "std_f1": 0.010323733626010623,
+        "mean_precision": 0.9172116072531534,
+        "std_precision": 0.018456685555407946,
+        "mean_recall": 0.9495071060129553,
+        "std_recall": 0.01195829294785202,
+        "mean_auroc": 0.9712553770189569,
+        "std_auroc": 0.008338552675196096,
+        "mean_fpr95": 0.14433378765662727,
+        "std_fpr95": 0.05450328168076821,
+        "mean_latency_us": 58.20477665062145,
+        "mean_throughput": 17181.80351424933,
+        "peak_rss_mb": 2151.90625
+    },
+    "diagnostic_probe": {
+        "mean_f1": 0.9613,
+        "std_f1": 0.0041,
+        "mean_precision": 0.9507,
+        "std_precision": 0.0104,
+        "mean_recall": 0.9725,
+        "std_recall": 0.0068,
+        "mean_auroc": 0.9883,
+        "std_auroc": 0.003,
+        "mean_prauc": 0.9888,
+        "std_prauc": 0.0034,
+        "mean_fpr95": 0.049,
+        "std_fpr95": 0.0077,
+        "latency_us": null,
+        "throughput": null,
+        "status": "Diagnostic Offline Probe (Non-Production)"
+    }
+}

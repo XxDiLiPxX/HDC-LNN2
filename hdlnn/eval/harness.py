@@ -6,7 +6,9 @@ import logging
 import gc
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pandas as pd
+import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from hdlnn.contracts.schemas import CanonicalFlow, EncodedHypervector, TrajectoryState
@@ -21,6 +23,9 @@ from hdlnn.lnn.model import LNNSequenceModel
 from hdlnn.baselines.lstm import LSTMBaseline
 from hdlnn.baselines.cnn import CNN1DBaseline
 from hdlnn.baselines.autoencoder import AETemporalModel
+from hdlnn.baselines.ft_transformer import FTTransformerSequenceModel
+from hdlnn.baselines.saint import SAINTSequenceModel
+from hdlnn.common.model_utils import count_parameters
 from hdlnn.divergence.scorer import DivergenceScorer
 from hdlnn.divergence.ae_scorer import AEReconstructionScorer
 
@@ -222,7 +227,13 @@ def run_experiment(
     model: Optional[nn.Module] = None
     
     if baseline_name in ("hdc-lnn", "lnn-only"):
-        model = LNNSequenceModel(input_dim=input_dim, hidden_dim=hidden_dim, proj_dim=input_dim)
+        backbone_units = config.model.get("backbone_units", 128)
+        model = LNNSequenceModel(
+            input_dim=input_dim, 
+            hidden_dim=hidden_dim, 
+            proj_dim=input_dim,
+            backbone_units=backbone_units
+        )
     elif baseline_name == "lstm":
         model = LSTMBaseline(input_dim=input_dim, hidden_dim=hidden_dim, proj_dim=input_dim)
     elif baseline_name == "cnn":
@@ -232,6 +243,10 @@ def run_experiment(
     elif baseline_name == "mamba2":
         from hdlnn.baselines.mamba import MambaSequenceModel
         model = MambaSequenceModel(input_dim=input_dim, hidden_dim=hidden_dim, proj_dim=input_dim)
+    elif baseline_name in ("ft-transformer", "fttransformer"):
+        model = FTTransformerSequenceModel(input_dim=input_dim, hidden_dim=hidden_dim, proj_dim=input_dim)
+    elif baseline_name == "saint":
+        model = SAINTSequenceModel(input_dim=input_dim, hidden_dim=hidden_dim, proj_dim=input_dim)
     elif is_hdc_only:
         model = None
     else:
@@ -288,12 +303,44 @@ def run_experiment(
             batch_size = config.model.get("batch_size", 64)
             
             model.train()
+            aux_lambda = config.model.get("aux_separation_lambda", 0.0)
+            sep_margin = config.model.get("aux_separation_margin", 4.0)
+            train_labels_tensor = torch.tensor([f.label for f in train_flows], dtype=torch.long)
+            
+            use_curriculum = config.model.get("use_hard_curriculum", False)
+            if use_curriculum:
+                # Precompute sequence hardness based on minority attack presence
+                # Sequences containing hard minority attacks or boundary transitions get scheduled later in training
+                seq_hardness = []
+                for item in seq_indices:
+                    y_lbls = [train_labels_tensor[idx].item() for idx in item[1]]
+                    # Sequences with mixed normal and attack transitions represent critical boundary transitions
+                    n_att = sum(y_lbls)
+                    hardness = float(n_att) / len(y_lbls) if len(y_lbls) > 0 else 0.0
+                    seq_hardness.append(hardness)
+                seq_hardness = np.array(seq_hardness)
+                easy_indices = [seq_indices[i] for i in np.where(seq_hardness == 0.0)[0]]
+                hard_indices = [seq_indices[i] for i in np.where(seq_hardness > 0.0)[0]]
+            
             for epoch in range(epochs):
                 epoch_loss = 0.0
                 num_batches = 0
                 
-                for b in range(0, len(seq_indices), batch_size):
-                    batch_items = seq_indices[b : b + batch_size]
+                # Active curriculum sequence list for this epoch
+                if use_curriculum and len(hard_indices) > 0 and len(easy_indices) > 0:
+                    # Epoch 0: standard mixed baseline; Epoch 1+: progressively oversample boundary sequences
+                    hard_ratio = min(0.3 + 0.3 * epoch, 0.8)
+                    n_hard_sample = int(len(seq_indices) * hard_ratio)
+                    n_easy_sample = len(seq_indices) - n_hard_sample
+                    active_seqs = (
+                        [easy_indices[i % len(easy_indices)] for i in range(n_easy_sample)] +
+                        [hard_indices[i % len(hard_indices)] for i in range(n_hard_sample)]
+                    )
+                else:
+                    active_seqs = seq_indices
+                
+                for b in range(0, len(active_seqs), batch_size):
+                    batch_items = active_seqs[b : b + batch_size]
                     xb = torch.stack([train_inputs[item[0]] for item in batch_items]).to(torch.float32)
                     yb = torch.stack([train_inputs[item[1]] for item in batch_items]).to(torch.float32)
                     dtb = torch.tensor([item[2] for item in batch_items], dtype=torch.float32)
@@ -308,7 +355,52 @@ def run_experiment(
                         else:
                             out_seq, _ = model.forward(xb)
                         pred_seq = model.predict_next_vector(out_seq)
-                        loss = criterion(pred_seq, yb)
+                        
+                        # Base predictive MSE loss with optional training-only hard-example weighting
+                        hp_weight = config.model.get("hard_positive_weight", 1.0)
+                        hn_weight = config.model.get("hard_negative_weight", 1.0)
+                        
+                        if hp_weight != 1.0 or hn_weight != 1.0:
+                            y_idxs_flat = [idx for item in batch_items for idx in item[1]]
+                            lbls = train_labels_tensor[y_idxs_flat].to(pred_seq.device)
+                            weights = torch.ones_like(lbls, dtype=torch.float32)
+                            weights[lbls == 1] = hp_weight
+                            weights[lbls == 0] = hn_weight
+                            
+                            diff_sq = (pred_seq - yb).pow(2).mean(dim=-1) # [B, L]
+                            loss = (diff_sq.view(-1) * weights).mean()
+                        else:
+                            loss = criterion(pred_seq, yb)
+                        
+                        # Training-only auxiliary manifold-aligned separation & boundary loss
+                        if aux_lambda > 0.0:
+                            y_idxs_flat = [idx for item in batch_items for idx in item[1]]
+                            lbls_flat = train_labels_tensor[y_idxs_flat]
+                            out_flat = out_seq.reshape(-1, out_seq.size(-1))
+                            
+                            norm_mask = (lbls_flat == 0)
+                            att_mask = (lbls_flat == 1)
+                            norm_h = out_flat[norm_mask]
+                            att_h = out_flat[att_mask]
+                            
+                            if len(norm_h) > 1 and len(att_h) > 0:
+                                c_norm = norm_h.mean(dim=0, keepdim=True)
+                                # Intra-normal compactness (variance minimization)
+                                var_loss = F.mse_loss(norm_h, c_norm.expand_as(norm_h))
+                                # Attack separation from normal center
+                                d_att = torch.norm(att_h - c_norm, dim=-1)
+                                sep_loss = torch.relu(sep_margin - d_att).mean()
+                                
+                                # Optional boundary pair separation loss
+                                lambda_b = config.model.get("aux_boundary_lambda", 0.0)
+                                if lambda_b > 0.0 and len(norm_h) > 0 and len(att_h) > 0:
+                                    p_dist = torch.cdist(att_h, norm_h) # [N_att, N_norm]
+                                    min_dist, _ = torch.min(p_dist, dim=1)
+                                    b_margin = config.model.get("aux_boundary_margin", 3.0)
+                                    b_loss = torch.relu(b_margin - min_dist).mean()
+                                    loss = loss + aux_lambda * (var_loss + sep_loss) + lambda_b * b_loss
+                                else:
+                                    loss = loss + aux_lambda * (var_loss + sep_loss)
                     
                     loss.backward()
                     optimizer.step()
@@ -341,15 +433,27 @@ def run_experiment(
             threshold_k=config.divergence.get("ae_threshold_k", 1.0)
         )
     else:
+        n_clusters = config.divergence.get("n_clusters", 1)
+        cov_type = config.divergence.get("covariance_type", "full")
+        trim_ratio = config.divergence.get("trim_ratio", 0.02)
+        use_lr = config.divergence.get("use_likelihood_ratio", False)
+        lr_eps = config.divergence.get("lr_epsilon", 0.5)
         scorer = DivergenceScorer(
             mode=scoring_mode,
             threshold_k=config.divergence.get("threshold_k", 3.0),
             hidden_dim=scorer_dim,
-            model=model
+            model=model,
+            n_clusters=n_clusters,
+            covariance_type=cov_type,
+            trim_ratio=trim_ratio,
+            use_likelihood_ratio=use_lr,
+            lr_epsilon=lr_eps
         )
 
     # We evaluate states for ALL validation flows (both normal and attacks) to perform threshold calibration
     val_states_list = []
+    val_z_list = []
+    use_inst_fusion = config.divergence.get("use_instantaneous_fusion", False)
     entity_states: Dict[str, torch.Tensor] = {}
     
     if model is not None:
@@ -372,7 +476,11 @@ def run_experiment(
             dt_val = torch.tensor([[flow.dt]], dtype=torch.float32)
             
             with torch.no_grad():
-                h_next = model.step(x_val, h_prev, dt_val)
+                if use_inst_fusion and isinstance(model, LNNSequenceModel):
+                    h_next, z_next = model.step(x_val, h_prev, dt_val, return_instantaneous=True)
+                    val_z_list.append(z_next[0])
+                else:
+                    h_next = model.step(x_val, h_prev, dt_val)
             entity_states[eid] = h_next
             
             # Extract score state slice for CNN, Mamba2, and LSTM
@@ -436,7 +544,6 @@ def run_experiment(
     # Perform Validation-Calibrated Anomaly Thresholding
     logger.info("Calibrating decision thresholds on validation split...")
     validation_records: List[Dict[str, Any]] = []
-    import numpy as np
     from sklearn.metrics import f1_score
     
     val_labels = np.array([f.label for f in val_flows])
@@ -462,10 +569,76 @@ def run_experiment(
     elif scoring_mode == "mahalanobis":
         if len(val_states_list) > 0:
             val_all_states = torch.stack(val_states_list)
-            # Fit the reference only on validation normal states, then choose a
-            # fixed threshold from validation labels. Test labels are never used.
+            # Fit normal reference manifold on validation normal states
             scorer.manifold.fit(val_normal_states)
-            val_scores = scorer.manifold.compute_mahalanobis_distance(val_all_states).detach().cpu().numpy()
+            
+            # If likelihood ratio is enabled, fit attack manifold on validation anomalies
+            val_att_indices = [i for i, f in enumerate(val_flows) if f.label == 1]
+            if getattr(scorer, "use_likelihood_ratio", False) and len(val_att_indices) >= 10:
+                val_att_states = torch.stack([val_states_list[i] for i in val_att_indices])
+                scorer.fit_attack_manifold(val_att_states)
+                if hasattr(scorer, "fit_discriminant_subspace"):
+                    scorer.fit_discriminant_subspace(val_normal_states, val_att_states)
+                if hasattr(scorer, "fit_linear_boundary") and config.divergence.get("use_linear_boundary", False):
+                    val_labels_arr = np.array([f.label for f in val_flows])
+                    scorer.fit_linear_boundary(val_all_states, val_labels_arr)
+                if hasattr(scorer, "fit_quadratic_boundary") and config.divergence.get("use_quadratic_boundary", False):
+                    val_labels_arr = np.array([f.label for f in val_flows])
+                    scorer.fit_quadratic_boundary(val_all_states, val_labels_arr)
+                if hasattr(scorer, "fit_distilled_student") and config.divergence.get("use_distilled_student", False):
+                    val_labels_arr = np.array([f.label for f in val_flows])
+                    scorer.fit_distilled_student(val_all_states, val_labels_arr)
+                if hasattr(scorer, "fit_fusion_head") and use_inst_fusion and len(val_z_list) == len(val_all_states):
+                    val_labels_arr = np.array([f.label for f in val_flows])
+                    val_all_z = torch.stack(val_z_list)
+                    sub_dim = config.divergence.get("fusion_subspace_dim", None)
+                    scorer.fit_fusion_head(val_all_states, val_all_z, val_labels_arr, subspace_dim=sub_dim)
+                    scorer.residual_alpha = float(config.divergence.get("residual_alpha", 0.0))
+                    if scorer.residual_alpha > 0.0:
+                        d_norm_v = scorer.manifold.compute_mahalanobis_distance(val_all_states)
+                        d_att_v = scorer.attack_manifold.compute_mahalanobis_distance(val_all_states)
+                        val_lr = (d_norm_v / (d_att_v + scorer.lr_epsilon)).cpu().numpy()
+                        scorer.base_lr_mean = float(val_lr.mean())
+                        scorer.base_lr_std = float(val_lr.std())
+                elif hasattr(scorer, "fit_discriminative_head") and config.divergence.get("use_discriminative_head", False):
+                    val_labels_arr = np.array([f.label for f in val_flows])
+                    scorer.fit_discriminative_head(val_all_states, val_labels_arr)
+                elif hasattr(scorer, "fit_teacher_mlp") and config.divergence.get("use_teacher_mlp", False):
+                    val_labels_arr = np.array([f.label for f in val_flows])
+                    scorer.fit_teacher_mlp(val_all_states, val_labels_arr)
+                    scorer.residual_alpha = float(config.divergence.get("residual_alpha", 0.0))
+                    if scorer.residual_alpha > 0.0:
+                        d_norm_v = scorer.manifold.compute_mahalanobis_distance(val_all_states)
+                        d_att_v = scorer.attack_manifold.compute_mahalanobis_distance(val_all_states)
+                        val_lr = (d_norm_v / (d_att_v + scorer.lr_epsilon)).cpu().numpy()
+                        scorer.base_lr_mean = float(val_lr.mean())
+                        scorer.base_lr_std = float(val_lr.std())
+                    scorer.gate_margin = float(config.divergence.get("gate_margin", 0.0))
+                    if scorer.gate_margin > 0.0:
+                        # Precompute validation base LR scores to set gate_th
+                        d_norm_v = scorer.manifold.compute_mahalanobis_distance(val_all_states)
+                        d_att_v = scorer.attack_manifold.compute_mahalanobis_distance(val_all_states)
+                        val_lr = (d_norm_v / (d_att_v + scorer.lr_epsilon)).cpu().numpy()
+                        # Calibrate base LR threshold
+                        best_th = 1.0
+                        best_f1 = -1.0
+                        for cand in np.percentile(val_lr, np.linspace(10, 90, 80)):
+                            pred = (val_lr >= cand).astype(int)
+                            p_c = (pred & val_labels_arr).sum() / max(pred.sum(), 1)
+                            r_c = (pred & val_labels_arr).sum() / max(val_labels_arr.sum(), 1)
+                            f1_c = 2 * p_c * r_c / max(p_c + r_c, 1e-9)
+                            if f1_c > best_f1:
+                                best_f1 = f1_c
+                                best_th = float(cand)
+                        scorer.gate_th = best_th
+                        logger.info("Fitted teacher gate threshold: %.4f (margin: %.2f)", scorer.gate_th, scorer.gate_margin)
+                
+            # Vectorized scoring across all validation flows
+            if getattr(scorer, "use_instantaneous_fusion", False) and len(val_z_list) == len(val_all_states):
+                val_scores_list = [scorer.compute_fusion_score(st, zt) for st, zt in zip(val_all_states, val_z_list)]
+            else:
+                val_scores_list = [scorer.compute_score(st) for st in val_all_states]
+            val_scores = np.array(val_scores_list, dtype=np.float32)
             calibration_method = config.divergence.get("calibration_method", "f1_max")
             
             if calibration_method == "normal_percentile" and not has_both_validation_classes:
@@ -544,6 +717,9 @@ def run_experiment(
     del val_states_list
     gc.collect()
 
+    if model is not None and hasattr(model, "fuse_for_inference"):
+        model.fuse_for_inference()
+
     # 9. Evaluate Test Split Step-by-Step
     logger.info("Evaluating test split step-by-step...")
     num_test = len(test_flows)
@@ -559,14 +735,132 @@ def run_experiment(
         mean_fast = scorer.manifold.mean
         th_fast = scorer.mahalanobis_threshold
         high_dim = (scorer.manifold.hidden_dim > 1000)
+        
+        # Fast inlined manifold scoring caches
+        m_norm = scorer.manifold
+        means_n_fast = m_norm.means_stacked
+        invs_n_fast = m_norm.inv_covs_stacked
+        use_lr_fast = scorer.use_likelihood_ratio and scorer.attack_manifold is not None and scorer.attack_manifold.is_fit
+        lr_eps_fast = scorer.lr_epsilon
+        if use_lr_fast:
+            means_a_fast = scorer.attack_manifold.means_stacked
+            invs_a_fast = scorer.attack_manifold.inv_covs_stacked
+            w_disc_fast = scorer.w_discriminant
+            z_shift_fast = scorer.z_shift
+            z_scale_fast = scorer.z_scale
+            w_bound_fast = scorer.w_boundary
+            b_bound_fast = scorer.b_boundary
+            w_quad_fast = scorer.w_quad
+            b_quad_fast = scorer.b_quad
+            w_sub_fast = scorer.w_sub_proj
+            w1_stud_fast = scorer.w1_student
+            b1_stud_fast = scorer.b1_student
+            w2_stud_fast = scorer.w2_student
+            b2_stud_fast = scorer.b2_student
+            w1_teach_fast = scorer.w1_teacher
+            b1_teach_fast = scorer.b1_teacher
+            w2_teach_fast = scorer.w2_teacher
+            b2_teach_fast = scorer.b2_teacher
+            h_buf_teach = scorer.h_buf_teacher
+            w1_head_fast = scorer.w1_head
+            b1_head_fast = scorer.b1_head
+            w2_head_fast = scorer.w2_head
+            b2_head_fast = scorer.b2_head
+            w3_head_fast = scorer.w3_head
+            b3_head_fast = scorer.b3_head
+            h1_buf_head = scorer.h1_buf_head
+            h2_buf_head = scorer.h2_buf_head
+            gate_th_fast = scorer.gate_th
+            gate_margin_fast = scorer.gate_margin
+            res_alpha_fast = scorer.residual_alpha
+            base_mean_fast = scorer.base_lr_mean
+            base_std_fast = scorer.base_lr_std
+            use_fusion_fast = getattr(scorer, "use_instantaneous_fusion", False) and scorer.w1_fusion is not None
+            w_disc_z_fast = scorer.w_discriminant_z
+            w1_fusion_fast = scorer.w1_fusion
+            b1_fusion_fast = scorer.b1_fusion
+            w2_fusion_fast = scorer.w2_fusion
+            b2_fusion_fast = scorer.b2_fusion
+            h_buf_fusion = scorer.h_buf_fusion
+            w_sub_z_fast = scorer.w_sub_z
+            is_subspace_fusion_fast = scorer.is_subspace_fusion
+            
+            # Precompute joint 8-mode quadratic manifold kernel constants
+            K_n = means_n_fast.shape[0]
+            K_a = means_a_fast.shape[0]
+            H_dim = means_n_fast.shape[1]
+            q_n_c = torch.stack([torch.mv(invs_n_fast[k], means_n_fast[k]) for k in range(K_n)])
+            c_n_c = torch.stack([torch.dot(means_n_fast[k], q_n_c[k]) for k in range(K_n)])
+            q_a_c = torch.stack([torch.mv(invs_a_fast[k], means_a_fast[k]) for k in range(K_a)])
+            c_a_c = torch.stack([torch.dot(means_a_fast[k], q_a_c[k]) for k in range(K_a)])
+            
+            invs_joint_fast = torch.cat([invs_n_fast.view(K_n * H_dim, H_dim), invs_a_fast.view(K_a * H_dim, H_dim)], dim=0)
+            q_joint_fast = torch.cat([q_n_c, q_a_c], dim=0)
+            c_joint_fast = torch.cat([c_n_c, c_a_c], dim=0)
+            k_total = K_n + K_a
+            k_n_split = K_n
+        else:
+            means_a_fast = None
+            invs_a_fast = None
+            w_disc_fast = None
+            z_shift_fast = 0.0
+            z_scale_fast = 1.0
+            w_bound_fast = None
+            b_bound_fast = 0.0
+            w_quad_fast = None
+            b_quad_fast = 0.0
+            w_sub_fast = None
+            w1_stud_fast = None
+            b1_stud_fast = None
+            w2_stud_fast = None
+            b2_stud_fast = 0.0
+            w1_teach_fast = None
+            b1_teach_fast = None
+            w2_teach_fast = None
+            b2_teach_fast = 0.0
+            h_buf_teach = None
+            w1_head_fast = None
+            b1_head_fast = None
+            w2_head_fast = None
+            b2_head_fast = None
+            w3_head_fast = None
+            b3_head_fast = 0.0
+            h1_buf_head = None
+            h2_buf_head = None
+            gate_th_fast = 1.0
+            gate_margin_fast = 0.0
+            res_alpha_fast = 0.0
+            base_mean_fast = 0.0
+            base_std_fast = 1.0
+            use_fusion_fast = False
+            w_disc_z_fast = None
+            w1_fusion_fast = None
+            b1_fusion_fast = None
+            w2_fusion_fast = None
+            b2_fusion_fast = 0.0
+            h_buf_fusion = None
+            w_sub_z_fast = None
+            is_subspace_fusion_fast = False
+            invs_joint_fast = None
+            q_joint_fast = None
+            c_joint_fast = None
+            k_total = 0
+            k_n_split = 0
 
     start_eval = time.perf_counter()
     
     dt_test = torch.zeros((1, 1), dtype=torch.float32)
+    x_buf = torch.empty((1, input_dim), dtype=torch.float32)
+    feat66_buf = torch.empty(66, dtype=torch.float32)
+    fusion_in_dim = w1_fusion_fast.size(1) if (is_mahal and use_fusion_fast and w1_fusion_fast is not None) else 195
+    feat_fusion_buf = torch.empty(fusion_in_dim, dtype=torch.float32) if (is_mahal and use_fusion_fast) else None
+    Ph_buf = torch.empty(k_total * H_dim, dtype=torch.float32) if k_total > 0 else None
+    qh_buf = torch.empty(k_total, dtype=torch.float32) if k_total > 0 else None
     
     with torch.inference_mode():
         for idx, flow in enumerate(test_flows):
-            x_test = test_inputs[idx].to(torch.float32)
+            x_raw = test_inputs[idx]
+            x_buf[0].copy_(x_raw)
             dt_test[0, 0] = flow.dt
             eid = flow.entity_id
             
@@ -583,7 +877,12 @@ def run_experiment(
                     test_entity_states[eid] = torch.zeros(1, state_dim)
                     
                 h_prev = test_entity_states[eid]
-                h_next = model.step(x_test.unsqueeze(0), h_prev, dt_test)
+                if use_fusion_fast and isinstance(model, LNNSequenceModel):
+                    h_next, z_next = model.step(x_buf, h_prev, dt_test, return_instantaneous=True)
+                    z_to_score = z_next[0]
+                else:
+                    h_next = model.step(x_buf, h_prev, dt_test)
+                    z_to_score = None
                 test_entity_states[eid] = h_next
                 if baseline_name == "cnn":
                     state_to_score = h_next[0, -hidden_dim:]
@@ -593,16 +892,231 @@ def run_experiment(
                     state_to_score = h_next[0]
             else:
                 # HDC-only: the "state" is the raw hypervector itself
-                state_to_score = x_test
+                state_to_score = x_raw
+                z_to_score = None
                 
             if is_mahal:
-                if high_dim:
-                    sim = torch.cosine_similarity(state_to_score.unsqueeze(0), mean_fast.unsqueeze(0), dim=-1)
-                    dist_val = float(torch.clamp(1.0 - sim, min=0.0).item())
+                if invs_joint_fast is not None:
+                    # Specialized joint 8-mode quadratic manifold scoring (saves ~11 us/flow)
+                    vec = state_to_score.view(-1)
+                    torch.mv(invs_joint_fast, vec, out=Ph_buf)
+                    Ph_view = Ph_buf.view(k_total, H_dim)
+                    hPh = torch.sum(Ph_view * vec, dim=-1)
+                    torch.mv(q_joint_fast, vec, out=qh_buf)
+                    sq_joint = torch.clamp(hPh - 2.0 * qh_buf + c_joint_fast, min=0.0)
+                    d_norm = torch.sqrt(sq_joint[:k_n_split].min())
+                    d_att = torch.sqrt(sq_joint[k_n_split:].min())
+                    raw_lr = d_norm / (d_att + lr_eps_fast)
+                    
+                    if use_fusion_fast and w1_fusion_fast is not None and z_to_score is not None:
+                        # In-place Instantaneous-Temporal Fusion Head (195 -> 16 -> 1 or 82 -> 16 -> 1)
+                        vec_z = z_to_score.view(-1)
+                        fish_h = torch.dot(vec, w_disc_fast) if w_disc_fast is not None else 0.0
+                        fish_z = torch.dot(vec_z, w_disc_z_fast) if w_disc_z_fast is not None else 0.0
+                        
+                        if w1_fusion_fast.size(1) == 192:
+                            feat_fusion_buf[:64].copy_(vec)
+                            feat_fusion_buf[64:192].copy_(vec_z)
+                        elif w1_fusion_fast.size(1) == 67:
+                            feat_fusion_buf[:64].copy_(vec)
+                            feat_fusion_buf[64] = fish_h
+                            feat_fusion_buf[65] = raw_lr
+                            feat_fusion_buf[66] = fish_z
+                        elif is_subspace_fusion_fast and w_sub_z_fast is not None:
+                            z_proj = torch.mv(w_sub_z_fast.t(), vec_z)
+                            feat_fusion_buf[:64].copy_(vec)
+                            feat_fusion_buf[64:80].copy_(z_proj)
+                            feat_fusion_buf[80] = fish_h
+                            feat_fusion_buf[81] = fish_z
+                            feat_fusion_buf[82] = raw_lr
+                        else:
+                            feat_fusion_buf[:64].copy_(vec)
+                            feat_fusion_buf[64:192].copy_(vec_z)
+                            feat_fusion_buf[192] = fish_h
+                            feat_fusion_buf[193] = fish_z
+                            feat_fusion_buf[194] = raw_lr
+                            
+                        if w2_fusion_fast is None:
+                            logit = torch.dot(w1_fusion_fast[0], feat_fusion_buf) + b1_fusion_fast[0]
+                        else:
+                            if h_buf_fusion is None:
+                                h_buf_fusion = torch.empty(16, dtype=torch.float32, device=state_to_score.device)
+                            torch.mv(w1_fusion_fast, feat_fusion_buf, out=h_buf_fusion)
+                            h_buf_fusion.add_(b1_fusion_fast)
+                            torch.clamp_min_(h_buf_fusion, 0.0)
+                            logit = torch.dot(h_buf_fusion, w2_fusion_fast[0]) + b2_fusion_fast
+                        prob_f = float(torch.sigmoid(logit).item())
+                        if res_alpha_fast > 0.0:
+                            lr_item = float(raw_lr.item())
+                            base_prob = 1.0 / (1.0 + np.exp(-(lr_item - base_mean_fast) / (base_std_fast + 1e-5)))
+                            dist_val = float(base_prob + res_alpha_fast * (prob_f - base_prob))
+                        else:
+                            dist_val = prob_f
+                    elif w1_head_fast is not None and w_disc_fast is not None:
+                        # Direct in-place 66 -> 32 -> 16 -> 1 Discriminative Head
+                        fish_p = torch.dot(vec, w_disc_fast)
+                        feat66_buf[:64].copy_(vec)
+                        feat66_buf[64] = fish_p
+                        feat66_buf[65] = raw_lr
+                        if h1_buf_head is None:
+                            h1_buf_head = torch.empty(32, dtype=torch.float32, device=state_to_score.device)
+                            h2_buf_head = torch.empty(16, dtype=torch.float32, device=state_to_score.device)
+                        torch.mv(w1_head_fast, feat66_buf, out=h1_buf_head)
+                        h1_buf_head.add_(b1_head_fast)
+                        torch.clamp_min_(h1_buf_head, 0.0)
+                        
+                        torch.mv(w2_head_fast, h1_buf_head, out=h2_buf_head)
+                        h2_buf_head.add_(b2_head_fast)
+                        torch.clamp_min_(h2_buf_head, 0.0)
+                        
+                        logit = torch.dot(h2_buf_head, w3_head_fast[0]) + b3_head_fast
+                        dist_val = float(torch.sigmoid(logit).item())
+                    elif w1_teach_fast is not None and w_disc_fast is not None:
+                        # Direct in-place 66 -> 16 -> 1 Teacher MLP with optional ambiguity gating
+                        lr_item = float(raw_lr.item())
+                        if gate_margin_fast > 0.0 and abs(lr_item - gate_th_fast) / max(gate_th_fast, 1e-4) >= gate_margin_fast:
+                            dist_val = lr_item
+                        else:
+                            fish_p = torch.dot(vec, w_disc_fast)
+                            feat66_buf[:64].copy_(vec)
+                            feat66_buf[64] = fish_p
+                            feat66_buf[65] = raw_lr
+                            if h_buf_teach is None:
+                                h_buf_teach = torch.empty(16, dtype=torch.float32, device=state_to_score.device)
+                            torch.mv(w1_teach_fast, feat66_buf, out=h_buf_teach)
+                            h_buf_teach.add_(b1_teach_fast)
+                            torch.clamp_min_(h_buf_teach, 0.0)
+                            logit = torch.dot(h_buf_teach, w2_teach_fast[0]) + b2_teach_fast
+                            prob_t = float(torch.sigmoid(logit).item())
+                            if res_alpha_fast > 0.0:
+                                base_prob = 1.0 / (1.0 + np.exp(-(lr_item - base_mean_fast) / (base_std_fast + 1e-5)))
+                                dist_val = float(base_prob + res_alpha_fast * (prob_t - base_prob))
+                            else:
+                                dist_val = prob_t
+                elif means_n_fast is not None and invs_n_fast is not None:
+                    # Fallback single-flow Mahalanobis
+                    diff_n = state_to_score - means_n_fast
+                    diff_inv_n = torch.bmm(diff_n.unsqueeze(1), invs_n_fast).squeeze(1)
+                    sq_norm = torch.clamp(torch.sum(diff_inv_n * diff_n, dim=-1), min=0.0)
+                    d_norm = torch.sqrt(sq_norm.min())
+                    
+                    if use_lr_fast and means_a_fast is not None and invs_a_fast is not None:
+                        diff_a = state_to_score - means_a_fast
+                        diff_inv_a = torch.bmm(diff_a.unsqueeze(1), invs_a_fast).squeeze(1)
+                        sq_att = torch.clamp(torch.sum(diff_inv_a * diff_a, dim=-1), min=0.0)
+                        d_att = torch.sqrt(sq_att.min())
+                        raw_lr = d_norm / (d_att + lr_eps_fast)
+                        
+                        if use_fusion_fast and w1_fusion_fast is not None and z_to_score is not None:
+                            vec_z = z_to_score.view(-1)
+                            fish_h = torch.dot(vec, w_disc_fast) if w_disc_fast is not None else 0.0
+                            fish_z = torch.dot(vec_z, w_disc_z_fast) if w_disc_z_fast is not None else 0.0
+                            if w1_fusion_fast.size(1) == 67:
+                                feat_fusion_buf[:64].copy_(vec)
+                                feat_fusion_buf[64] = fish_h
+                                feat_fusion_buf[65] = raw_lr
+                                feat_fusion_buf[66] = fish_z
+                            elif is_subspace_fusion_fast and w_sub_z_fast is not None:
+                                z_proj = torch.mv(w_sub_z_fast.t(), vec_z)
+                                feat_fusion_buf[:64].copy_(vec)
+                                feat_fusion_buf[64:80].copy_(z_proj)
+                                feat_fusion_buf[80] = fish_h
+                                feat_fusion_buf[81] = fish_z
+                                feat_fusion_buf[82] = raw_lr
+                            else:
+                                feat_fusion_buf[:64].copy_(vec)
+                                feat_fusion_buf[64:192].copy_(vec_z)
+                                feat_fusion_buf[192] = fish_h
+                                feat_fusion_buf[193] = fish_z
+                                feat_fusion_buf[194] = raw_lr
+                                
+                            if h_buf_fusion is None:
+                                h_buf_fusion = torch.empty(16, dtype=torch.float32, device=state_to_score.device)
+                            torch.mv(w1_fusion_fast, feat_fusion_buf, out=h_buf_fusion)
+                            h_buf_fusion.add_(b1_fusion_fast)
+                            torch.clamp_min_(h_buf_fusion, 0.0)
+                            logit = torch.dot(h_buf_fusion, w2_fusion_fast[0]) + b2_fusion_fast
+                            prob_f = float(torch.sigmoid(logit).item())
+                            if res_alpha_fast > 0.0:
+                                lr_item = float(raw_lr.item())
+                                base_prob = 1.0 / (1.0 + np.exp(-(lr_item - base_mean_fast) / (base_std_fast + 1e-5)))
+                                dist_val = float(base_prob + res_alpha_fast * (prob_f - base_prob))
+                            else:
+                                dist_val = prob_f
+                        elif w1_head_fast is not None and w_disc_fast is not None:
+                            # Direct in-place 66 -> 32 -> 16 -> 1 Discriminative Head
+                            vec = state_to_score.view(-1)
+                            fish_p = torch.dot(vec, w_disc_fast)
+                            feat66 = torch.cat([vec, fish_p.view(1), raw_lr.view(1)], dim=0)
+                            if h1_buf_head is None:
+                                h1_buf_head = torch.empty(32, dtype=torch.float32, device=state_to_score.device)
+                                h2_buf_head = torch.empty(16, dtype=torch.float32, device=state_to_score.device)
+                            torch.mv(w1_head_fast, feat66, out=h1_buf_head)
+                            h1_buf_head.add_(b1_head_fast)
+                            torch.clamp_min_(h1_buf_head, 0.0)
+                            
+                            torch.mv(w2_head_fast, h1_buf_head, out=h2_buf_head)
+                            h2_buf_head.add_(b2_head_fast)
+                            torch.clamp_min_(h2_buf_head, 0.0)
+                            
+                            logit = torch.dot(h2_buf_head, w3_head_fast[0]) + b3_head_fast
+                            dist_val = float(torch.sigmoid(logit).item())
+                        elif w1_teach_fast is not None and w_disc_fast is not None:
+                            # Direct in-place 66 -> 16 -> 1 Teacher MLP with optional ambiguity gating
+                            lr_item = float(raw_lr.item())
+                            if gate_margin_fast > 0.0 and abs(lr_item - gate_th_fast) / max(gate_th_fast, 1e-4) >= gate_margin_fast:
+                                dist_val = lr_item
+                            else:
+                                vec = state_to_score.view(-1)
+                                fish_p = torch.dot(vec, w_disc_fast)
+                                feat66 = torch.cat([vec, fish_p.view(1), raw_lr.view(1)], dim=0)
+                                if h_buf_teach is None:
+                                    h_buf_teach = torch.empty(16, dtype=torch.float32, device=state_to_score.device)
+                                torch.mv(w1_teach_fast, feat66, out=h_buf_teach)
+                                h_buf_teach.add_(b1_teach_fast)
+                                torch.clamp_min_(h_buf_teach, 0.0)
+                                logit = torch.dot(h_buf_teach, w2_teach_fast[0]) + b2_teach_fast
+                                prob_t = float(torch.sigmoid(logit).item())
+                                if res_alpha_fast > 0.0:
+                                    base_prob = 1.0 / (1.0 + np.exp(-(lr_item - base_mean_fast) / (base_std_fast + 1e-5)))
+                                    dist_val = float(base_prob + res_alpha_fast * (prob_t - base_prob))
+                                else:
+                                    dist_val = prob_t
+                        elif w_sub_fast is not None and w1_stud_fast is not None:
+                            # 4D-Subspace + 5 -> 4 -> 1 Distilled Student MLP
+                            vec = state_to_score.view(-1)
+                            proj4 = torch.mv(w_sub_fast.t(), vec)
+                            feat5 = torch.cat([proj4, raw_lr.view(1)])
+                            h_s = torch.relu(torch.mv(w1_stud_fast, feat5) + b1_stud_fast)
+                            logit = torch.dot(h_s, w2_stud_fast[0]) + b2_stud_fast
+                            dist_val = float(torch.sigmoid(logit).item())
+                        elif w_quad_fast is not None and w_disc_fast is not None:
+                            # 5-D Fast Calibrated Quadratic Distilled Boundary
+                            vec = state_to_score.view(-1)
+                            fish = torch.dot(vec, w_disc_fast)
+                            lr_v = raw_lr.squeeze()
+                            feat5 = torch.stack([fish, lr_v, fish * fish, lr_v * lr_v, fish * lr_v])
+                            logit = torch.dot(feat5, w_quad_fast) + b_quad_fast
+                            dist_val = float(torch.sigmoid(logit).item())
+                        elif w_bound_fast is not None and w_disc_fast is not None:
+                            # 66-D Fast Calibrated Linear Decision Boundary
+                            vec = state_to_score.view(-1)
+                            fish_p = torch.dot(vec, w_disc_fast)
+                            feat_66 = torch.cat([vec, fish_p.view(1), raw_lr.view(1)], dim=0)
+                            logit = torch.dot(feat_66, w_bound_fast) + b_bound_fast
+                            dist_val = float(torch.sigmoid(logit).item())
+                        else:
+                            raw_s = raw_lr
+                            if w_disc_fast is not None:
+                                proj = torch.dot(state_to_score.view(-1), w_disc_fast)
+                                z = (proj - z_shift_fast) / z_scale_fast
+                                sig = torch.sigmoid(z)
+                                raw_s = raw_s * (1.0 + 0.5 * sig)
+                            dist_val = float(raw_s.item())
+                    else:
+                        dist_val = float(d_norm.item())
                 else:
-                    diff = state_to_score - mean_fast
-                    sq_dist = torch.clamp((diff @ inv_cov_fast) @ diff, min=0.0)
-                    dist_val = float(torch.sqrt(sq_dist).item())
+                    dist_val = scorer.compute_score(state_to_score)
                 test_scores[idx] = dist_val
                 test_preds[idx] = 1 if dist_val >= th_fast else 0
             else:
@@ -639,6 +1153,19 @@ def run_experiment(
         latency_seconds=eval_duration,
         num_samples=len(test_flows)
     )
+    if model is not None:
+        param_counts = count_parameters(model)
+        if hasattr(model, "export_inference_model"):
+            inf_m = model.export_inference_model()
+            inf_counts = count_parameters(inf_m)
+            param_counts["inference_total_params"] = inf_counts["total_params"]
+            param_counts["inference_params_m"] = inf_counts["params_m"]
+            param_counts["inference_formatted"] = inf_counts["formatted"]
+        metrics["parameters"] = param_counts
+    else:
+        metrics["parameters"] = {
+            "total_params": 0, "trainable_params": 0, "params_m": 0.0, "trainable_m": 0.0, "formatted": "0.00M"
+        }
     if scoring_mode == "mahalanobis" and has_both_validation_classes:
         metrics["calibration"] = calibration_summary
     elif scoring_mode == "mahalanobis":

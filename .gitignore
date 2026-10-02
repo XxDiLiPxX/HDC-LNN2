@@ -27,13 +27,35 @@ htmlcov/
 
 # Bulky experimental runs directory (raw outputs, large parquet logs, decision records)
 runs/
+!runs/README.md
+scratch_runs/
+scratch_cand_comparison.json
 data/
 hdlnn/deploy/uploads/
 
-# Raw dataset files (heavy CSVs up to 200MB+; see datasets/SOURCES.md for canonical links)
-datasets/*.csv
-datasets/*/*.csv
-*.csv
+# Local agent guides & skills
+Humanize.md
+
+# Internship report & manuscripts (excluded from git push)
+report/
+
+# Large raw dataset dumps (>100 MB, excluded from GitHub push; see datasets/SOURCES.md)
+datasets/UNSW-NB15_1.csv
+datasets/UNSW-NB15_2.csv
+datasets/UNSW-NB15_3.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_65.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_67.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_68.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_69.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_7.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_70.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_71.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_72.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_73.csv
+datasets/UNSW_2018_IoT_Botnet_Dataset_9.csv
+datasets/dataset10.csv
+datasets/dataset23.csv
+datasets/dataset7-selected-columns.csv
 
 # Local IDE & editor configuration
 .claude/
